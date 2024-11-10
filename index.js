@@ -1,6 +1,6 @@
 const express = require('express');
 const app = express();
-const port = 9000;
+const port = process.env.PORT || 3000;
 const { Pool } = require('pg')
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
