@@ -1,15 +1,30 @@
 const express = require('express');
 const app = express();
-const port = process.env.PORT || 3000;
 const { Pool } = require('pg')
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
+const port = process.env.PORT || 3000;
+const crypto = require('crypto');
+
 
 
 const pool = new Pool({
   connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
 })
 
+
+/*
+
+const pool = new Pool({
+  user: 'postgres',
+  host: 'localhost',
+  database: 'db',
+  password: 'developer@100',
+  port: 5432
+});
+
+
+*/
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
@@ -19,7 +34,7 @@ app.use((req, res, next) => {
 app.use(express.json()); // Parse JSON bodies
 app.use(express.urlencoded({ extended: true }));
 
-const sendMail = async (otp,receiver) => {
+const sendMailMessage = async (body,receiver,subject) => {
   console.log('sending mail');
 
   const transporter = nodemailer.createTransport({
@@ -33,7 +48,7 @@ const sendMail = async (otp,receiver) => {
   const mailOptions = {
     from: 'YASSER APP(DEMO) <anoibidickson@gmail.com>',
     to: receiver,
-    subject: 'Yasser - (OTP) for Verification',
+    subject: subject,
     html: `
       <!DOCTYPE html>
       <html>
@@ -84,7 +99,90 @@ const sendMail = async (otp,receiver) => {
       </head>
       <body>
         <div class="container">
-          <div class="header">Your Verification Code</div>
+          <div class="header">${subject}</div>
+          <p class="message">${body}</p>
+          <div class="footer">Thank you for choosing our service!</div>
+        </div>
+      </body>
+      </html>
+    `,
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Email sent:', info.response);
+  } catch (error) {
+    console.log('Error:', error);
+  }
+};
+
+
+const sendMail = async (otp,receiver,subject) => {
+  console.log('sending mail');
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: 'anoibidickson@gmail.com',
+      pass: 'rgxdeqwdxcydsipg', // Your App Password
+    },
+  });
+
+  const mailOptions = {
+    from: 'YASSER APP(DEMO) <anoibidickson@gmail.com>',
+    to: receiver,
+    subject: subject,
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+          }
+          .container {
+            width: 100%;
+            padding: 20px;
+            max-width: 600px;
+            margin: auto;
+            background-color: #ffffff;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+          }
+          .header {
+            background-color: #4CAF50;
+            padding: 10px;
+            color: #ffffff;
+            text-align: center;
+            font-size: 24px;
+          }
+          .otp {
+            font-size: 36px;
+            font-weight: bold;
+            color: #333333;
+            text-align: center;
+            margin: 20px 0;
+          }
+          .message {
+            font-size: 16px;
+            color: #555555;
+            line-height: 1.6;
+            text-align: center;
+            padding: 0 20px;
+          }
+          .footer {
+            text-align: center;
+            font-size: 14px;
+            color: #999999;
+            padding: 10px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">${subject}</div>
           <p class="message">Use the code below to complete your verification process. This code will expire in 10 minutes.</p>
           <div class="otp">${otp}</div>
           <p class="message">If you did not request this, please ignore this email or contact support.</p>
@@ -107,8 +205,79 @@ const sendMail = async (otp,receiver) => {
 
 
 app.get('/', (req, res) => {
-  res.send('Yasser backend is runnni');
+  res.send('Yasser APP API');
   
+});
+
+
+app.post('/driver/get-status', async (req, res) => {
+  try {
+    const { id } = req.body;
+    console.log('getting driver availability status')
+    // Validate input
+    if (!id) {
+      return res.status(400).json({ message: 'Driver ID is required', status: false });
+    }
+
+    // Get driver status
+    const getStatusQuery = {
+      text: `SELECT active_status FROM drivers WHERE id = $1`,
+      values: [id],
+    };
+
+    const result = await pool.query(getStatusQuery);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Driver not found', status: false });
+    }
+
+    const driverStatus = result.rows[0].active_status;
+    res.status(200).json({ message: 'Driver status retrieved successfully', status: true, active_status: driverStatus });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+app.post('/driver/update-status', async (req, res) => {
+  try {
+    const { id } = req.body;
+
+    console.log('update driver status request', req.body)
+    // Validate input
+    if (!id) {
+      return res.status(400).json({ message: 'Driver ID is required', status: false });
+    }
+
+    // Get current active_status
+    const getCurrentStatusQuery = {
+      text: `SELECT active_status FROM drivers WHERE id = $1`,
+      values: [id],
+    };
+
+    const result = await pool.query(getCurrentStatusQuery);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Driver not found', status: false });
+    }
+
+    const currentStatus = result.rows[0].active_status;
+    const newStatus = currentStatus == 1 ? 0 : 1;
+
+    // Update active_status
+    const updateQuery = {
+      text: `UPDATE drivers SET active_status = $1 WHERE id = $2 RETURNING *`,
+      values: [newStatus, id],
+    };
+
+    const updatedDriver = await pool.query(updateQuery);
+
+    console.log(`Driver updated: ${updatedDriver.rows[0]}`);
+    res.status(200).json({ message: 'Status updated successfully!', status: true, driverstatus: newStatus });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
 });
 
 app.post('/driver/register', async (req, res) => {
@@ -139,7 +308,7 @@ app.post('/driver/register', async (req, res) => {
     try {
       const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
 
-      sendMail(otpCode, email);
+      sendMail(otpCode, email,'Yasser - (OTP) for Verification');
 
 
       // Insert OTP into otp table
@@ -399,7 +568,7 @@ app.post('/fetch-drivers', async (req, res) => {
         cos($1 * PI() / 180) * cos(latitude::double precision * PI() / 180) *
         cos(($2 * PI() / 180) - (longitude::double precision * PI() / 180)))) AS distance
       FROM drivers
-      WHERE active_status = 'active'
+      WHERE active_status = 'true'
       ORDER BY id DESC`,
       [pickupLatitude, pickupLongitude]
     );
@@ -564,13 +733,28 @@ app.post('/book-ride', async (req, res) => {
       if (existingBooking.rows.length === 0) {
         isUnique = true;
       }
+
     }
+
+    const currentTime = new Date();
+
+// Format date and time using toLocaleString
+const formattedDateTime = currentTime.toLocaleString('en-US', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
 
     // Insert booking into database
     const result = await pool.query(
-      `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place)
+      `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime)
        VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11) RETURNING *`,
-      [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, bookingCode, driver_id, place, car_id, destination_place]
+      [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, bookingCode, driver_id, place, car_id, destination_place, formattedDateTime]
     );
 
 
@@ -583,6 +767,63 @@ app.post('/book-ride', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+
+
+app.post('/hail-passenger', async (req, res) => {
+  try {
+    const { booking_code } = req.body;
+
+    // Validate input data
+    if (!booking_code) {
+      return res.status(400).json({ message: 'Booking code is required', status: false });
+    }
+
+    // Get passenger ID from bookings table
+    const getPassengerQuery = {
+      text: `SELECT passenger_id FROM bookings
+             WHERE booking_code = $1`,
+      values: [booking_code],
+    };
+
+    const passengerResult = await pool.query(getPassengerQuery);
+
+    if (passengerResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Booking not found', status: false });
+    }
+
+    const passengerId = passengerResult.rows[0].passenger_id;
+
+    // Get user's email from users table
+    const getUserEmailQuery = {
+      text: `SELECT email FROM users
+             WHERE id = $1`,
+      values: [passengerId],
+    };
+
+    const emailResult = await pool.query(getUserEmailQuery);
+
+    if (emailResult.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found', status: false });
+    }
+
+    const userEmail = emailResult.rows[0].email;
+
+    // Send email to user
+    const mailOptions = {
+      subject: 'Your Driver is On the Way',
+      text: `Hello, your driver is on the way to pick you up. Please stand by.`,
+    };
+
+    sendMailMessage(mailOptions.text, userEmail, mailOptions.subject)
+    return res.status(200).json({ message: 'Passenger has been alerted, please goto pickup location!', status: true });
+
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to hail passenger', status: false });
   }
 });
 
@@ -622,15 +863,141 @@ app.post('/book-status', async (req, res) => {
 });
 
 
+app.post('/driver/update/account', async (req, res) => {
+  try {
+    const { id } = req.body;
+
+    // Validate input data
+    if (!id) {
+      return res.status(400).json({ message: 'Driver ID is required', status: false });
+    }
+
+    // Fetch driver data
+    const query = {
+      text: `SELECT * FROM drivers
+             WHERE id = $1`,
+      values: [id],
+    };
+
+    const result = await pool.query(query);
+
+    // Check if driver found
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Driver not found', status: false });
+    }
+
+    res.status(200).json({
+      message: 'Driver data fetched successfully!',
+      data: result.rows[0],
+      status: true
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+
+const MERCHANT_SECRET = 'wh2JYcbBKiC6QSq8H1lEGNtgt';
+
+
+function verify(signature, secret, payloadBody) {
+  let hash = crypto.createHmac('sha256', secret);
+  hash = hash.update(payloadBody).digest('hex');
+  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(signature));
+}
+
+app.post('/driver/kyc', async (req, res) => {
+  try {
+  
+   const signature = req.headers['x-metamap-signature'];
+  const payloadBody = JSON.stringify(req.body);
+
+  const isValidPayload = verify(signature, MERCHANT_SECRET, payloadBody);
+let id = 0;
+  if (isValidPayload) {
+    console.log('Valid payload:', req.body);
+    id  = req.body.metadata.id
+    res.status(200).send('Webhook received successfully!');
+  } else {
+    console.log('Invalid payload:', req.body);
+    res.status(401).send('Invalid signature!');
+  }
+
+    console.log('driver kyc verification data:', req.params)
+
+    // Validate input data
+    if (!id) {
+      return res.status(400).json({ message: 'Driver ID is required',status: false });
+    }
+
+    // Update KYC verified status
+    const query = {
+      text: `UPDATE drivers
+             SET verified = TRUE
+             WHERE id = $1
+             RETURNING *`,
+      values: [id],
+    };
+
+    const result = await pool.query(query);
+
+    // Check if update was successful
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Driver not found',status: false });
+    }
+
+    res.json({
+      message: 'KYC verified successfully!',
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal Server Error',status: false });
+  }
+});
+
+app.post('/driver/fetch-balance', async (req, res) => {
+  try {
+    const { id } = req.body;
+
+    console.log('fetch balance for id:',id)
+   
+
+    // Fetch user balance
+    let result = await pool.query(
+      'SELECT account_balance FROM drivers WHERE id = $1',
+      [id]
+    );
+
+    // Check if user exists
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Wallet ID not found. Logout and login back your account.', status: false });
+    }
+
+    const balance = result.rows[0].account_balance;
+
+    res.status(200).json({
+      message: 'User balance fetched successfully',
+      balance,
+      status: true,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
 
 app.post('/fetch-balance', async (req, res) => {
   try {
     const { id } = req.body;
 
+    console.log('fetch balance for id:',id)
    
 
     // Fetch user balance
-    const result = await pool.query(
+    let result = await pool.query(
       'SELECT account_balance FROM users WHERE id = $1',
       [id]
     );
@@ -662,10 +1029,11 @@ app.post('/bookings', async (req, res) => {
 
     // Fetch booking status from database
     const result = await pool.query(
-      `SELECT * FROM bookings WHERE status = $1 AND passenger_id = $2 OR driver_id = $2`,
-      [status, userId]
+      `SELECT * FROM bookings 
+       WHERE (passenger_id = $1 OR driver_id = $1) 
+       AND status = $2`,
+      [userId, status]
     );
-
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Bookings not found', ok: false });
     }
@@ -715,6 +1083,161 @@ app.post('/bookings', async (req, res) => {
 });
 
 
+app.post('/vehicles/delete-vehicle', async (req, res) => {
+  console.log('delete vehicle body data', req.body)
+  try {
+    const { id,driver_id } = req.body;
+
+    // Validate input data
+    if (!id) {
+      return res.status(400).json({ message: 'Vehicle ID is required', status: false });
+    }
+
+    // Delete vehicle from uploaded_cars table
+    const deleteQuery = {
+      text: `DELETE FROM uploaded_cars
+             WHERE id = $1`,
+      values: [id],
+    };
+
+    await pool.query(deleteQuery);
+
+    // Retrieve remaining vehicles from uploaded_cars table
+    const getVehiclesQuery = {
+      text: `SELECT * FROM uploaded_cars WHERE driver_id = $1  ORDER BY id DESC`,
+      values: [driver_id],
+
+    };
+
+    const result = await pool.query(getVehiclesQuery);
+
+    // Return success response with remaining vehicles
+    res.json({
+      message: 'Vehicle has been deleted',
+      data: result.rows,
+      status: true,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to delete vehicle', status: false });
+  }
+});
+
+
+app.post('/vehicles/get-vehicles', async (req, res) => {
+  try {
+    const {
+      driver_id,
+    } = req.body;
+
+    console.log('get vehicles for driver:', driver_id)
+
+    console.log('getting drivers cars request', req.body)
+    // Validate input data
+    if (!driver_id) {
+      return res.status(400).json({ error: 'Driver ID is required' });
+    }
+
+    // Retrieve vehicles from uploaded_cars table
+    const query = {
+      text: `SELECT * FROM uploaded_cars
+             WHERE driver_id = $1 ORDER BY id DESC`,
+      values: [driver_id],
+    };
+
+    const result = await pool.query(query);
+
+    // Return success response
+    if (result.rows.length > 0) {
+      res.json({ message: 'Vehicles retrieved successfully', data: result.rows, status: true });
+    } else {
+      res.json({ message: 'No vehicles found for this driver', status: true,data:[] });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to retrieve vehicles', status: true });
+  }
+});
+
+
+app.post('/vehicle/register', async (req, res) => {
+  console.log('register vehicle body data', req.body)
+  try {
+    const {
+      driver_id,
+      car_model,
+      car_color,
+      car_name,
+      seats,
+      car_number,
+      phone,
+      pickuptype,
+      latitude,
+      longitude,
+    } = req.body;
+
+    // Validate input data
+    if (!driver_id || !car_model || !car_color || !car_name || !seats || !car_number || !phone || !pickuptype) {
+      return res.status(400).json({ message: 'Missing required fields', status: false });
+    }
+
+    // Insert data into uploaded_cars table
+    const query = {
+      text: `INSERT INTO uploaded_cars (
+        driver_id,
+        car_model,
+        car_color,
+        car_name,
+        car_image,
+        seats,
+        car_number,
+        phone,
+        pickuptype,
+        latitude,
+        longitude
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      values: [
+        driver_id,
+        car_model,
+        car_color,
+        car_name,
+        'none',
+        seats,
+        car_number,
+        phone,
+        pickuptype,
+        latitude,
+        longitude,
+      ],
+    };
+
+    const result = await pool.query(query);
+
+    // Update organisation column in drivers table
+    const updateQuery = {
+      text: `UPDATE drivers
+             SET organisation = $1
+             WHERE id = $2`,
+      values: [car_name, driver_id],
+    };
+
+    await pool.query(updateQuery);
+
+    const getVehiclesQuery = {
+      text: `SELECT * FROM uploaded_cars WHERE driver_id = $1  ORDER BY id DESC`,
+      values: [driver_id],
+
+    };
+
+    const vehiclesRes = await pool.query(getVehiclesQuery);
+
+    // Return success response
+    res.json({ message: 'Vehicle has been registered and can now be used for pickup services', data: vehiclesRes.rows, status: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Failed to register vehicle', status: false });
+  }
+});
 
 
 app.post('/driver/location', async (req, res) => {
@@ -821,6 +1344,8 @@ app.post('/cancel-ride', async (req, res) => {
       `DELETE FROM bookings WHERE booking_code = $1`,
       [id]
     );
+
+    sendMailMessage('Hey! your ride was cancelled by driver. Driver may be busy at the moment, request another ride.','anoibi@47gmail.com','Ride canncelled')
 
 
     res.status(200).json({
@@ -1009,6 +1534,90 @@ app.post('/recent-chats', async (req, res) => {
   }
 });
 
+
+app.post('/recent-chats', async (req, res) => {
+  try {
+    const { id } = req.body;
+
+    console.log('recent chats request', req.body)
+
+    // Validation
+    if (!id) {
+      return res.status(400).json({
+        message: 'User ID is required',
+        status: false,
+      });
+    }
+
+    // Query to fetch recent chats
+    const recentChatsQuery = `
+      SELECT 
+        c.id,
+        c.message,
+        c.time_sent,
+        c.driver_id,
+        c.passenger_id
+      FROM 
+        chats c
+      WHERE 
+        (c.driver_id = $1 OR c.passenger_id = $1)
+        AND 
+        c.id IN (
+          SELECT 
+            MAX(id) 
+          FROM 
+            chats 
+          GROUP BY 
+            driver_id, 
+            passenger_id 
+        )
+      ORDER BY 
+        c.time_sent DESC;
+    `;
+
+    const result = await pool.query(recentChatsQuery, [id]);
+
+    // Format time_sent to "2mins ago", "1hr ago", etc.
+    const recentChats = await Promise.all(result.rows.map(async (chat) => {
+      const timeDiff = (Date.now() - chat.time_sent.getTime()) / 1000;
+      let timeAgo;
+
+      console.log(chat)
+
+      if (timeDiff < 60) {
+        timeAgo = `${Math.floor(timeDiff)}s ago`;
+      } else if (timeDiff < 3600) {
+        timeAgo = `${Math.floor(timeDiff / 60)}mins ago`;
+      } else {
+        timeAgo = `${Math.floor(timeDiff / 3600)}hr ago`;
+      }
+
+      // Fetch driver and passenger names
+      const driver = await pool.query('SELECT * FROM drivers WHERE id = $1', [chat.driver_id]);
+      const passenger = await pool.query('SELECT * FROM users WHERE id = $1', [chat.passenger_id]);
+
+      return {
+        ...chat,
+        time_sent: timeAgo,
+        driver_name: driver.rows[0]?.name,
+        passenger_name: passenger.rows[0]?.name,
+      };
+    }));
+
+    res.status(200).json({
+      message: 'Recent chats fetched successfully',
+      status: true,
+      data: recentChats,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      message: 'Internal Server Error',
+      status: false,
+    });
+  }
+});
+
 // Function to calculate distance between two points
 function calculateDistance(lat1, lon1, lat2, lon2) {
   const R = 6371; // km
@@ -1070,7 +1679,7 @@ app.post('/verify-email', async (req, res) => {
   
   try {
     const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
-
+    sendMail(otpCode, email, 'Password Reset- OTP Code')
     // Insert OTP into otp table
    const ins =  await pool.query(
       'INSERT INTO verification (email, otp_code) VALUES ($1, $2)',
@@ -1102,7 +1711,7 @@ app.post('/verify-email', async (req, res) => {
   try {
     const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
 
-    sendMail(otpCode, email);
+    sendMail(otpCode, email, 'Yasser - OTP Code');
 
 
     // Insert OTP into otp table
@@ -1239,27 +1848,34 @@ app.post('/upload-car', async (req, res) => {
 
 
 app.post('/transactions', async (req, res) => {
-  const { user_id, description, amount, date, transaction_type, transaction_id } = req.body;
+  const { id } = req.body;
 
-  // Create a new transaction object
-  const transaction = {
-    user_id,
-    description,
-    amount,
-    date,
-    transaction_type,
-    transaction_id
+  console.log('transactions request body:', req.body)
 
-  };
+  // Validate input data
+  if (!id) {
+    return res.status(400).json({ message: 'User ID is required', status: false  });
+  }
 
-  // Insert the transaction into the database
+  // Fetch transactions from database
   try {
-    const result = await pool.query('INSERT INTO transactions SET ?', transaction);
-    res.json({ message: 'Transaction inserted successfully!' });
+    const query = {
+      text: `SELECT * FROM transactions
+             WHERE user_id = $1`,
+      values: [id],
+    };
+
+    const result = await pool.query(query);
+    res.status(200).json({ 
+      message: 'Transactions fetched successfully!', 
+      data: result.rows ,
+      status: true
+    });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Internal Server Error' });
+    res.status(500).json({ message: 'Internal Server Error', status: false });
   }
+
 });
 
 app.post('/login', async (req, res) => {
