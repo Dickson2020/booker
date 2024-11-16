@@ -612,6 +612,7 @@ app.post('/fetch-drivers', async (req, res) => {
       return res.status(400).json({
         message: 'Pickup and destination coordinates are required',
         status: false,
+        drivers:[]
       });
     }
 
@@ -621,15 +622,16 @@ app.post('/fetch-drivers', async (req, res) => {
         cos($1 * PI() / 180) * cos(latitude::double precision * PI() / 180) *
         cos(($2 * PI() / 180) - (longitude::double precision * PI() / 180)))) AS distance
       FROM drivers
-      WHERE active_status = '1'
+      WHERE active_status = $3
       ORDER BY id DESC`,
-      [pickupLatitude, pickupLongitude]
+      [pickupLatitude, pickupLongitude,1]
     );
 
     if (activeDrivers.rows.length === 0) {
       return res.status(404).json({
         message: 'No active drivers found within the specified radius',
         status: false,
+        drivers:[]
       });
     }
 
