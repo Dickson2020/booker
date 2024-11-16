@@ -621,7 +621,7 @@ app.post('/fetch-drivers', async (req, res) => {
         cos($1 * PI() / 180) * cos(latitude::double precision * PI() / 180) *
         cos(($2 * PI() / 180) - (longitude::double precision * PI() / 180)))) AS distance
       FROM drivers
-      WHERE active_status = 'true'
+      WHERE active_status = '1'
       ORDER BY id DESC`,
       [pickupLatitude, pickupLongitude]
     );
