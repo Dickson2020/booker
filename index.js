@@ -3,15 +3,12 @@ const app = express();
 const { Pool } = require('pg')
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3000; //for production use 3000
 const crypto = require('crypto');
-
-
 
 const pool = new Pool({
   connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
 })
-
 
 /*
 
@@ -22,6 +19,7 @@ const pool = new Pool({
   password: 'developer@100',
   port: 5432
 });
+
 
 
 */
@@ -209,6 +207,116 @@ app.get('/', (req, res) => {
   
 });
 
+app.post('/admin/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    console.log('login admin request:', req.body)
+    // Validate input
+    if (!password) {
+      return res.status(400).json({ message: 'Password cannot be empty', status: false });
+    }
+    if (!email) {
+      return res.status(400).json({ message: 'Email cannot be empty', status: false });
+    }
+
+    // Get driver status
+    const getStatusQuery = {
+      text: `SELECT * FROM administration WHERE email = $1 AND password = $2`,
+      values: [email, password],
+    };
+
+    const result = await pool.query(getStatusQuery);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Administrator login credentials incorrect', status: false });
+    }
+
+    res.status(200).json({ message:  'retrieved successfully', status: true, data: result.rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+app.post('/admin/fetch-updates', async (req, res) => {
+  try {
+    console.log('admin: fetch updates request....')
+    // Validate input
+  
+    // Get driver status
+    const getBookingsLengthQuery = {
+      text: `SELECT * FROM bookings`   
+    };
+
+    const getBookingsLength = await pool.query(getBookingsLengthQuery);
+
+    const getAvailableRidesQuery = {
+      text: `SELECT * FROM drivers WHERE active_status = $1`,
+       values: [1],   
+    };
+
+    const getAvailableRides = await pool.query(getAvailableRidesQuery);
+
+    const getAllUsersQuery = {
+      text: `SELECT * FROM users`
+    };
+
+    const getAllUsers = await pool.query(getAllUsersQuery);
+
+
+    res.status(200).json({ message:  'updates fetched', 
+      status: true, 
+      bookedRides: getBookingsLength.rows.length ,
+      totalEarnings: 0,
+      cancelledRides: 0,
+      availableRides: getAvailableRides.rows.length,
+      totalTodayPickup: 0,
+      totalPickupPayment: 0,
+      totalUsers: getAllUsers.rows.length,
+      totalTransactions: 0,
+      ongoingRides: 0
+    
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+app.post('/admin/fetch-drivers', async (req, res) => {
+  try {
+    const { type } = req.body;
+    console.log('admin: fetch drivers request:', req.body)
+    // Validate input
+  
+    // Get driver status
+    const getVerifiedQuery = {
+      text: `SELECT * FROM drivers WHERE verified = $1 ORDER BY id DESC`,
+      values: ['1'],
+    };
+
+    const result1 = await pool.query(getVerifiedQuery);
+
+
+    const getUnVerifiedQuery = {
+      text: `SELECT * FROM drivers WHERE verified = $1 ORDER BY id DESC`,
+      values: ['0'],
+    };
+
+    const result2 = await pool.query(getUnVerifiedQuery);
+
+    const getrankedQuery = {
+      text: `SELECT * FROM drivers ORDER BY id DESC`    };
+
+    const result3 = await pool.query(getrankedQuery);
+
+
+    res.status(200).json({ message:  'Drivers fetched', status: true, unverified: result1.rows, verified: result2.rows, ranked: result3.rows  });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
 
 app.post('/driver/get-status', async (req, res) => {
   try {
