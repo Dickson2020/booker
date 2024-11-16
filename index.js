@@ -6,6 +6,7 @@ const nodemailer = require('nodemailer');
 const port = process.env.PORT || 3000; //for production use 3000
 const crypto = require('crypto');
 
+
 const pool = new Pool({
   connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
 })
@@ -35,6 +36,18 @@ app.use(express.urlencoded({ extended: true }));
 const sendMailMessage = async (body,receiver,subject) => {
   console.log('sending mail');
 
+  try {
+    const apiUrl = 'http://qoaproject.top/yasser/send-email-message.php';
+    const params = `?email=${receiver}&subject=${subject}&content=${body}`;
+
+    const response = await fetch(apiUrl + params);
+    const data = await response.json();
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+
+  /*
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -112,98 +125,30 @@ const sendMailMessage = async (body,receiver,subject) => {
   } catch (error) {
     console.log('Error:', error);
   }
+
+  */
 };
 
 
-const sendMail = async (otp,receiver,subject) => {
-  console.log('sending mail');
-
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: 'anoibidickson@gmail.com',
-      pass: 'rgxdeqwdxcydsipg', // Your App Password
-    },
-  });
-
-  const mailOptions = {
-    from: 'YASSER APP(DEMO) <anoibidickson@gmail.com>',
-    to: receiver,
-    subject: subject,
-    html: `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            background-color: #f4f4f4;
-          }
-          .container {
-            width: 100%;
-            padding: 20px;
-            max-width: 600px;
-            margin: auto;
-            background-color: #ffffff;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-          }
-          .header {
-            background-color: #4CAF50;
-            padding: 10px;
-            color: #ffffff;
-            text-align: center;
-            font-size: 24px;
-          }
-          .otp {
-            font-size: 36px;
-            font-weight: bold;
-            color: #333333;
-            text-align: center;
-            margin: 20px 0;
-          }
-          .message {
-            font-size: 16px;
-            color: #555555;
-            line-height: 1.6;
-            text-align: center;
-            padding: 0 20px;
-          }
-          .footer {
-            text-align: center;
-            font-size: 14px;
-            color: #999999;
-            padding: 10px;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">${subject}</div>
-          <p class="message">Use the code below to complete your verification process. This code will expire in 10 minutes.</p>
-          <div class="otp">${otp}</div>
-          <p class="message">If you did not request this, please ignore this email or contact support.</p>
-          <div class="footer">Thank you for choosing our service!</div>
-        </div>
-      </body>
-      </html>
-    `,
-  };
-
+async function sendMail(otp, receiver, subject) {
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Email sent:', info.response);
-  } catch (error) {
-    console.log('Error:', error);
-  }
-};
+    const apiUrl = 'http://qoaproject.top/yasser/send-email.php';
+    const params = `?email=${receiver}&subject=${subject}&content=${otp}`;
 
+    const response = await fetch(apiUrl + params);
+    const data = await response.json();
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
 // Usage: sendMail with an example OTP
 
 
-app.get('/', (req, res) => {
+app.get('/', async (req, res) => {
   res.send('Yasser APP API');
+
+  await sendMail('999','anoibi47@gmail.com','otp')
   
 });
 
@@ -416,7 +361,7 @@ app.post('/driver/register', async (req, res) => {
     try {
       const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
 
-      sendMail(otpCode, email,'Yasser - (OTP) for Verification');
+     await sendMail(otpCode, email,'Yasser - (OTP) for Verification');
 
 
       // Insert OTP into otp table
@@ -518,7 +463,7 @@ app.post('/register', async (req, res) => {
 
     try {
       const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
-      sendMail(otpCode, email);
+     await sendMail(otpCode, email);
 
       // Insert OTP into otp table
       await pool.query(
@@ -925,7 +870,7 @@ app.post('/hail-passenger', async (req, res) => {
       text: `Hello, your driver is on the way to pick you up. Please stand by.`,
     };
 
-    sendMailMessage(mailOptions.text, userEmail, mailOptions.subject)
+    await sendMailMessage(mailOptions.text, userEmail, mailOptions.subject)
     return res.status(200).json({ message: 'Passenger has been alerted, please goto pickup location!', status: true });
 
 
@@ -1453,7 +1398,7 @@ app.post('/cancel-ride', async (req, res) => {
       [id]
     );
 
-    sendMailMessage('Hey! your ride was cancelled by driver. Driver may be busy at the moment, request another ride.','anoibi@47gmail.com','Ride canncelled')
+    await sendMailMessage('Hey! your ride was cancelled by driver. Driver may be busy at the moment, request another ride.','anoibi@47gmail.com','Ride canncelled')
 
 
     res.status(200).json({
