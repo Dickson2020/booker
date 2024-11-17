@@ -668,6 +668,7 @@ app.post('/submit-review', async (req, res) => {
   }
 });
 
+
 app.post('/fetch-drivers', async (req, res) => {
   try {
     const {
@@ -684,36 +685,30 @@ app.post('/fetch-drivers', async (req, res) => {
       return res.status(400).json({
         message: 'Pickup and destination coordinates are required',
         status: false,
-        drivers: []
+        drivers:[]
       });
     }
 
-    /*
-
-    ,
+    const activeDrivers = await pool.query(
+      `SELECT *,
         (6371 * acos(sin($1 * PI() / 180) * sin(latitude::double precision * PI() / 180) +
         cos($1 * PI() / 180) * cos(latitude::double precision * PI() / 180) *
         cos(($2 * PI() / 180) - (longitude::double precision * PI() / 180)))) AS distance
-      
-
-        */
-
-    const activeDrivers = await pool.query(
-      `SELECT * FROM drivers
-      WHERE active_status = $1
+      FROM drivers
+      WHERE active_status = $3
       AND latitude IS NOT NULL
       AND longitude IS NOT NULL
       AND latitude != ''
       AND longitude != ''
       ORDER BY id DESC`,
-      [1]
+      [pickupLatitude, pickupLongitude,1]
     );
 
     if (activeDrivers.rows.length === 0) {
       return res.status(404).json({
         message: 'No active drivers found within the specified radius',
         status: false,
-        drivers: []
+        drivers:[]
       });
     }
 
@@ -741,14 +736,10 @@ app.post('/fetch-drivers', async (req, res) => {
         [driver.id]
       );
 
-      const resolvedReviewsData = reviews.rows;
+      
+      const resolvedReviewsData =  reviews.rows;
 
-      const pickupDistance = calculateDistance(
-        parseFloat(driver.latitude),
-        parseFloat(driver.longitude),
-        parseFloat(pickupLatitude),
-        parseFloat(pickupLongitude)
-      );
+      const pickupDistance = driver.distance;
       const destinationDistance = calculateDistance(
         parseFloat(driver.latitude),
         parseFloat(driver.longitude),
@@ -757,40 +748,38 @@ app.post('/fetch-drivers', async (req, res) => {
       );
 
       const totalDistance = pickupDistance + destinationDistance;
-      const speed = 40; // km per hour
+      const speed = 40 / 60; // km per minute
       const baseFare = 0.4; // in dollars
       const perKilometerFare = 1.2; // in dollars
-      const totalFare = baseFare + totalDistance * perKilometerFare;
-      const etaInHours = totalDistance / speed;
-      const etaInMinutes = etaInHours * 60;
-
+      const totalFare = new Intl.NumberFormat().format(baseFare + totalDistance * perKilometerFare);
+      const etaInMinutes = Math.floor(totalDistance / speed);
       let eta;
-      if (isNaN(etaInMinutes)) {
-        eta = 'None';
-      } else if (etaInMinutes < 60) {
-        eta = `${Math.floor(etaInMinutes)} mins`;
+      if (etaInMinutes < 60) {
+        eta = `${etaInMinutes} mins`;
       } else {
         const hours = Math.floor(etaInMinutes / 60);
-        const remainingMinutes = Math.floor(etaInMinutes % 60);
+        const remainingMinutes = etaInMinutes % 60;
         eta = `${hours}h ${remainingMinutes}mins`;
       }
 
-      let fare;
-      if (isNaN(totalFare)) {
-        fare = 'None';
-      } else {
-        const fareParts = totalFare.toString().split('.');
-        const actualVal = fareParts[0];
-        const cent = fareParts[1] ? fareParts[1] : '00';
-        fare = `${actualVal}.${cent}`;
+
+      let cent = ''
+      let actualVal = ''
+      if(totalFare.includes(".")){
+        cent = totalFare.split(".")[1]
+        actualVal = totalFare.split(".")[0]
+      }else{
+        cent = '00'
+        actualVal = totalFare
       }
 
       if (cars.rows.length > 0) {
         drivers.push({
           ...driver,
           cars: cars.rows,
-          eta,
-          fare,
+          eta: `${eta}`,
+          fare: `${actualVal}`,
+          fareCent: cent,
           reviews: resolvedReviewsData,
         });
       }
