@@ -689,21 +689,15 @@ app.post('/fetch-drivers', async (req, res) => {
       });
     }
 
-    /*
-
-    ,
+    const activeDrivers = await pool.query(
+      `SELECT *,
         (6371 * acos(sin($1 * PI() / 180) * sin(latitude::double precision * PI() / 180) +
         cos($1 * PI() / 180) * cos(latitude::double precision * PI() / 180) *
         cos(($2 * PI() / 180) - (longitude::double precision * PI() / 180)))) AS distance
-      
-        pickupLatitude, pickupLongitude,
-        */
-
-    const activeDrivers = await pool.query(
-      `SELECT * FROM drivers
+      FROM drivers
       WHERE active_status = $3
       ORDER BY id DESC`,
-      [1]
+      [pickupLatitude, pickupLongitude,1]
     );
 
     if (activeDrivers.rows.length === 0) {
