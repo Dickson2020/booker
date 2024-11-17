@@ -3,7 +3,7 @@ const app = express();
 const { Pool } = require('pg')
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
-const port = process.env.PORT || 3000; //for production use 3000
+const port = process.env.PORT || 9000; //for production use 3000
 const crypto = require('crypto');
 
 
@@ -11,7 +11,10 @@ const pool = new Pool({
   connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
 })
 
+
+
 /*
+
 
 const pool = new Pool({
   user: 'postgres',
@@ -20,6 +23,7 @@ const pool = new Pool({
   password: 'developer@100',
   port: 5432
 });
+
 
 
 
@@ -389,6 +393,74 @@ app.post('/driver/register', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+function uuidv4() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+app.get('/account/balance/:id/:amount', async (req, res) => {
+  const { id, amount } = req.params;
+
+  try {
+    // Generate a unique transaction ID
+    let transactionId;
+    let isUnique = false;
+
+    while (!isUnique) {
+      transactionId = uuidv4();
+      const existingTransaction = await pool.query(
+        'SELECT * FROM transactions WHERE transaction_id = $1',
+        [transactionId]
+      );
+
+      if (existingTransaction.rows.length === 0) {
+        isUnique = true;
+      }
+    }
+
+
+    const getUserPreviousBalance = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+    const newBalance = Number(getUserPreviousBalance.rows[0].account_balance) + Number(amount)
+    // Update account balance
+    await pool.query(
+      'UPDATE users SET account_balance =  $1 WHERE id = $2',
+      [newBalance, id]
+    );
+
+    // Insert transaction
+    await pool.query(
+      'INSERT INTO transactions (user_id, description, amount, status, transaction_date, transaction_type, transaction_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [
+        id,
+        'Account deposit',
+        amount,
+        'Successful',
+        new Date().toISOString(),
+        'Credit',
+        transactionId
+      ]
+    );
+
+    // Return updated user data
+    const updatedUser = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+
+    res.send({
+      status: true,
+      message: 'Account balance updated successfully',
+      data: updatedUser.rows[0]
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({
+      status: false,
+      message: 'Database error',
+      data: null
+    });
   }
 });
 
@@ -805,12 +877,12 @@ const formattedDateTime = currentTime.toLocaleString('en-US', {
 });
 
 
-    // Insert booking into database
-    const result = await pool.query(
-      `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10, $11) RETURNING *`,
-      [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, bookingCode, driver_id, place, car_id, destination_place, formattedDateTime]
-    );
+   // Insert booking into database
+const result = await pool.query(
+  `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+  [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, 'pending', bookingCode, driver_id, place, car_id, destination_place, formattedDateTime]
+);
 
 
     res.status(201).json({
