@@ -745,10 +745,10 @@ app.post('/fetch-drivers', async (req, res) => {
 
       const pickupDistance = driver.distance;
       const destinationDistance = calculateDistance(
-        driver.latitude,
-        driver.longitude,
-        destinationLatitude,
-        destinationLongitude
+        parseFloat(driver.latitude),
+        parseFloat(driver.longitude),
+        parseFloat(destinationLatitude),
+        parseFloat(destinationLongitude)
       );
 
       const totalDistance = pickupDistance + destinationDistance;
