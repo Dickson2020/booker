@@ -743,7 +743,12 @@ app.post('/fetch-drivers', async (req, res) => {
 
       const resolvedReviewsData = reviews.rows;
 
-      const pickupDistance = driver.distance;
+      const pickupDistance = calculateDistance(
+        parseFloat(driver.latitude),
+        parseFloat(driver.longitude),
+        parseFloat(pickupLatitude),
+        parseFloat(pickupLongitude)
+      );
       const destinationDistance = calculateDistance(
         parseFloat(driver.latitude),
         parseFloat(driver.longitude),
