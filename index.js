@@ -425,6 +425,7 @@ app.get('/account/balance/:id/:amount', async (req, res) => {
 
 
     const getUserPreviousBalance = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+    sendMailMessage('Hi, '+getUserPreviousBalance.rows[0].name +', you have received a deposit of $'+amount, getUserPreviousBalance.rows[0].email, 'Yasser: Wallet Deposit Notification')
     const newBalance = Number(getUserPreviousBalance.rows[0].account_balance) + Number(amount)
     // Update account balance
     await pool.query(
