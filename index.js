@@ -3,18 +3,16 @@ const app = express();
 const { Pool } = require('pg')
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
-const port = process.env.PORT || 9000; //for production use 3000
+const port = process.env.PORT || 3000; //for production use 3000
 const crypto = require('crypto');
+
 
 
 const pool = new Pool({
   connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
 })
 
-
-
 /*
-
 
 const pool = new Pool({
   user: 'postgres',
@@ -23,6 +21,10 @@ const pool = new Pool({
   password: 'developer@100',
   port: 5432
 });
+
+
+
+
 
 
 
@@ -298,7 +300,7 @@ app.post('/driver/get-status', async (req, res) => {
 
 app.post('/driver/update-status', async (req, res) => {
   try {
-    const { id } = req.body;
+    const { id, car_id } = req.body;
 
     console.log('update driver status request', req.body)
     // Validate input
@@ -306,6 +308,42 @@ app.post('/driver/update-status', async (req, res) => {
       return res.status(400).json({ message: 'Driver ID is required', status: false });
     }
 
+
+    if(car_id != ""){
+
+    
+    const getCarCurrentStatusQuery = {
+      text: `SELECT status FROM uploaded_cars WHERE id = $1`,
+      values: [car_id],
+    };
+
+    const carStatusResult = await pool.query(getCarCurrentStatusQuery);
+
+    if (carStatusResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Vehicle not found', status: false });
+    }
+
+    const carCurrentStatus = carStatusResult.rows[0].status;
+    const carNewStatus = carCurrentStatus? false : true;
+
+    const updateCarQuery = {
+      text: `UPDATE uploaded_cars SET status = $1 WHERE id = $2`,
+      values: [carNewStatus, car_id],
+    };
+
+    console.log('new car status: '+carNewStatus)
+
+
+    const updateCarStatus = await pool.query(updateCarQuery);
+    if(updateCarStatus){
+      console.log('car status updated')
+
+    }else{
+      console.log('car status not updated')
+
+    }
+
+  }
     // Get current active_status
     const getCurrentStatusQuery = {
       text: `SELECT active_status FROM drivers WHERE id = $1`,
@@ -495,6 +533,24 @@ app.post('/update-geolocation', async (req, res) => {
   }
 });
 
+
+app.post('/driver/update-geolocation', async (req, res) => {
+  try {
+
+    console.log('request body', req.body)
+    const { id, latitude, longitude } = req.body;
+    await pool.query(
+      'UPDATE drivers SET latitude = $1, longitude = $2  WHERE id = $3',
+      [latitude, longitude, id]
+    );
+    res.status(200).json({ message: 'Geolocation updated!', status: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+
 app.post('/users/:id/update-bio', async (req, res) => {
   try {
 
@@ -510,6 +566,24 @@ app.post('/users/:id/update-bio', async (req, res) => {
     res.status(500).json({ message: 'Internal Server Error', status: false });
   }
 });
+
+
+app.post('/driver/:id/update-bio', async (req, res) => {
+  try {
+
+    console.log('request body', req.body)
+    const { id, name, email, phone, countryName,about } = req.body;
+    await pool.query(
+      'UPDATE drivers SET name = $1, email = $2, phone = $3, country = $4, about = $5  WHERE id = $6',
+      [name, email, phone, countryName, about, id]
+    );
+    res.json({ message: 'Account informations updated!', status: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
 
 app.post('/register', async (req, res) => {
   try {
@@ -568,7 +642,7 @@ app.post('/transactions', async (req, res) => {
   try {
 
 
-    console.log('req', req.body)
+    console.log('transaction req', req.body)
 
     const { id } = req.body;
 
@@ -580,11 +654,14 @@ app.post('/transactions', async (req, res) => {
 
     if (history.rows.length > 0) {
       return res.status(200).json({ data: history.rows, status: true });
+    }else{
+      return res.status(210).json({ message:'No transactions yet', status: false });
+ 
     }
 
 
   } catch (err) {
-    return res.status(501).json({ status: false });
+    return res.status(501).json({ status: false, message:'Internal server error' });
   }
 });
 
@@ -718,6 +795,7 @@ app.post('/fetch-drivers', async (req, res) => {
         'SELECT * FROM uploaded_cars WHERE driver_id = $1',
         [driver.id]
       );
+      
 
       const reviews = await pool.query(
         `SELECT dr.*,
@@ -749,8 +827,8 @@ app.post('/fetch-drivers', async (req, res) => {
 
       const totalDistance = pickupDistance + destinationDistance;
       const speed = 40 / 60; // km per minute
-      const baseFare = 0.4; // in dollars
-      const perKilometerFare = 1.2; // in dollars
+      const baseFare = 0.12; // in dollars
+      const perKilometerFare = 1.03; // in dollars
       const totalFare = new Intl.NumberFormat().format(baseFare + totalDistance * perKilometerFare);
       const etaInMinutes = Math.floor(totalDistance / speed);
       let eta;
@@ -840,11 +918,32 @@ app.post('/fetch-chats', async (req, res) => {
 });
 
 
+app.post('/report', async(req, res)=>{
+
+  const {name, email,message }= req.body
+  if (!name || !email || !message) {
+      return res.status(400).json({ message: 'Required fields are missing', status: false });
+    }
+const result = await pool.query(
+  `INSERT INTO reports (name, email, message)
+   VALUES ($1, $2, $3) RETURNING *`,
+  [name, email, message]
+);
+if(result){
+
+  return res.status(200).json({ message: 'Issue has been submitted. Our team will respond to this issue.', status: true });
+
+}else{
+  return res.status(410).json({ message: 'Internal server error', status: false });
+
+}
+
+});
 
 app.post('/book-ride', async (req, res) => {
   try {
     const { driver_id, passenger_id, from_latitude, from_longitude, destination_latitude, 
-      destination_longitude, book_amount, place, car_id, destination_place } = req.body;
+      destination_longitude, book_amount, place, car_id, destination_place, stop_latitude, stop_longitude } = req.body;
 
     // Input validation
     if (!passenger_id || !from_latitude || !from_longitude || !destination_latitude || !destination_longitude || !book_amount) {
@@ -884,10 +983,20 @@ const formattedDateTime = currentTime.toLocaleString('en-US', {
 
    // Insert booking into database
 const result = await pool.query(
-  `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
-  [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, 'pending', bookingCode, driver_id, place, car_id, destination_place, formattedDateTime]
+  `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime, stop_latitude, stop_longitude)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+  [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, 'pending', bookingCode, driver_id, place, car_id, destination_place, formattedDateTime, stop_latitude, stop_longitude]
 );
+const getDriverQuery = {
+  text: `SELECT * FROM drivers
+         WHERE id = $1`,
+  values: [driver_id],
+};
+
+const driverRes = await pool.query(getDriverQuery);
+
+console.log('driver data:',driverRes)
+sendMailMessage(`You have a ride request at Pickup location: ${place} - Destination: ${destination_place} . Passenger is expecting you. Accept or Reject ride`,driverRes.rows[0].email, 'New RIde Request(View notification)')
 
 
     res.status(201).json({
@@ -1163,7 +1272,7 @@ app.post('/bookings', async (req, res) => {
     const result = await pool.query(
       `SELECT * FROM bookings 
        WHERE (passenger_id = $1 OR driver_id = $1) 
-       AND status = $2`,
+       AND status = $2 ORDER BY id DESC`,
       [userId, status]
     );
     if (result.rows.length === 0) {
@@ -1326,8 +1435,9 @@ app.post('/vehicle/register', async (req, res) => {
         phone,
         pickuptype,
         latitude,
-        longitude
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        longitude,
+        status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       values: [
         driver_id,
         car_model,
@@ -1340,6 +1450,7 @@ app.post('/vehicle/register', async (req, res) => {
         pickuptype,
         latitude,
         longitude,
+        false
       ],
     };
 
@@ -1380,10 +1491,12 @@ app.post('/driver/location', async (req, res) => {
 
     const driverLocation = await pool.query('SELECT * FROM drivers WHERE id = $1', [id]);
 
+    console.log('driver fetched coords',driverLocation)
+
     res.status(200).json({
       message: 'Driver current location fetched',
       status: true,
-      bookings: driverLocation.rows[0],
+      coords: driverLocation.rows[0],
     });
   } catch (error) {
     console.error(error);
@@ -1432,6 +1545,49 @@ app.post('/all-bookings', async (req, res) => {
   }
 });
 
+app.post('/driver/location', async (req, res) => {
+  try {
+    const { id } = req.body;
+
+    console.log('Fetch all driver location request:', req.body);
+
+    if (!userId) {
+      return res.status(400).json({ message: 'Driver ID is required', status: false });
+    }
+
+    const result = await pool.query(
+      `SELECT latitude, longitude FROM drivers WHERE id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(200).json({ 
+        message: 'Driver not found in our records', 
+        status: false, 
+        count: 0 
+      });
+    }
+
+    const coordinates = result.rows;
+    console.log('driver coords fetched: '+coordinates)
+
+    res.status(200).json({
+      message: 'Driver location fetched',
+      status: true,
+      data: coordinates
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ 
+      message: 'Internal Server Error', 
+      status: false, 
+      error: error.message 
+    });
+  }
+});
+
+
+
 app.post('/reject-ride', async (req, res) => {
   try {
     const { id } = req.body;
@@ -1468,17 +1624,33 @@ app.post('/cancel-ride', async (req, res) => {
   try {
     const { id } = req.body;
 
-
     console.log('cancel ride request:', req.body)
+
+    const existingBooking = await pool.query(
+      `SELECT * FROM bookings WHERE booking_code = $1`,
+      [id]
+    );
+    if (existingBooking.rows.length > 0) {
+      const getDriverQuery = {
+        text: `SELECT * FROM drivers
+               WHERE id = $1`,
+        values: [existingBooking.rows[0].driver_id],
+      };
+      
+      const driverRes = await pool.query(getDriverQuery);
+      
+      console.log('driver data:',driverRes)
+      sendMailMessage(`Ride request at Pickup location: ${existingBooking.rows[0].place}, was cancelled by passenger.`,driverRes.rows[0].email, 'Ride Request Cancelled(by customer)')
+      
+
+      
+    }
 
     // Update booking status in database
     const result = await pool.query(
       `DELETE FROM bookings WHERE booking_code = $1`,
       [id]
     );
-
-    await sendMailMessage('Hey! your ride was cancelled by driver. Driver may be busy at the moment, request another ride.','anoibi@47gmail.com','Ride canncelled')
-
 
     res.status(200).json({
       message: 'Ride cancelled successfully',
@@ -1494,14 +1666,14 @@ app.post('/cancel-ride', async (req, res) => {
 
 app.post('/accept-ride', async (req, res) => {
   try {
-    const { id, passenger_id } = req.body;
+    const { id } = req.body;
 
     console.log('Accept ride request:', req.body)
 
     // Update booking status in database
     const result = await pool.query(
-      `UPDATE bookings SET status = 'accepted' WHERE booking_code = $1 AND passenger_id = $2 RETURNING *`,
-      [id, passenger_id]
+      `UPDATE bookings SET status = 'accepted' WHERE booking_code = $1 RETURNING*`,
+      [id]
     );
 
     if (result.rows.length === 0) {
@@ -1519,7 +1691,7 @@ app.post('/accept-ride', async (req, res) => {
   }
 });
 
-app.patch('/complete-ride', async (req, res) => {
+app.post('/complete-ride', async (req, res) => {
   try {
     const { id } = req.body;
 
@@ -1530,7 +1702,7 @@ app.patch('/complete-ride', async (req, res) => {
 
     // Update ride status to completed
     const result = await pool.query(
-      `UPDATE bookings SET status = 'completed' WHERE id = $1 RETURNING *`,
+      `UPDATE bookings SET status = 'completed' WHERE booking_code = $1 RETURNING *`,
       [id]
     );
 
