@@ -919,7 +919,7 @@ app.post('/fetch-drivers', async (req, res) => {
         fareMultiplier = 0.8; // decrease fare by 20%
       }
 
-      if (cars.pickuptype === 'XL' || cars.pickuptype === 'PET') {
+      if (cars.pickuptype === 'xl' || cars.pickuptype === 'pet') {
         fareMultiplier *= 1.33; // increase fare by 20% for XL or PET pickup types
       }
       
