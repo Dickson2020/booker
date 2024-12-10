@@ -3,9 +3,8 @@ const app = express();
 const { Pool } = require('pg')
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
-const port = process.env.PORT || 3000; //for production use 3000
+const port = process.env.PORT || 9000; //for production use 3000
 const crypto = require('crypto');
-
 
 
 const pool = new Pool({
@@ -14,6 +13,7 @@ const pool = new Pool({
 
 /*
 
+
 const pool = new Pool({
   user: 'postgres',
   host: 'localhost',
@@ -21,10 +21,6 @@ const pool = new Pool({
   password: 'developer@100',
   port: 5432
 });
-
-
-
-
 
 
 
@@ -298,6 +294,67 @@ app.post('/driver/get-status', async (req, res) => {
   }
 });
 
+app.post('/account/user/fetch-updates', async (req, res) => {
+  try {
+    const { id } = req.body;
+    console.log('getting new user account updates')
+    // Validate input
+    if (!id) {
+      return res.status(400).json({ message: 'user ID is required', status: false });
+    }
+
+    // Get driver status
+    const getUserQuery = {
+      text: `SELECT * FROM users WHERE id = $1`,
+      values: [id],
+    };
+
+    const result = await pool.query(getUserQuery);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found', status: false });
+    }
+
+    const userInfo = result.rows[0];
+    res.status(200).json({ message: 'User data retrieved successfully', status: true, data: userInfo });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+
+app.post('/account/driver/fetch-updates', async (req, res) => {
+  try {
+    const { id } = req.body;
+    console.log('getting new driver account updates')
+    // Validate input
+    if (!id) {
+      return res.status(400).json({ message: 'driver ID is required', status: false });
+    }
+
+    // Get driver status
+    const getUserQuery = {
+      text: `SELECT * FROM drivers WHERE id = $1`,
+      values: [id],
+    };
+
+    const result = await pool.query(getUserQuery);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Us driver not found', status: false });
+    }
+
+    const userInfo = result.rows[0];
+    res.status(200).json({ message: 'driver data retrieved successfully', status: true, data: userInfo });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+
+
 app.post('/driver/update-status', async (req, res) => {
   try {
     const { id, car_id } = req.body;
@@ -512,6 +569,26 @@ app.get('/users/:id/update-position', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Internal Server Error' });
+  }
+});
+
+
+app.post('/update-photo', async (req, res) => {
+  try {
+    const { id, type, uri } = req.body;
+
+    if(type == 'driver'){
+      await pool.query('UPDATE drivers SET photo = $1  WHERE id = $2', [uri, id]);
+
+    }else{
+      await pool.query('UPDATE users SET photo = $1  WHERE id = $2', [uri, id]);
+
+    }
+
+    res.json({ message: 'User photo updated successfully!', status: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
   }
 });
 
@@ -920,14 +997,14 @@ app.post('/fetch-chats', async (req, res) => {
 
 app.post('/report', async(req, res)=>{
 
-  const {name, email,message }= req.body
+  const {name, email,message,image }= req.body
   if (!name || !email || !message) {
       return res.status(400).json({ message: 'Required fields are missing', status: false });
     }
 const result = await pool.query(
-  `INSERT INTO reports (name, email, message)
-   VALUES ($1, $2, $3) RETURNING *`,
-  [name, email, message]
+  `INSERT INTO reports (name, email, message,photo)
+   VALUES ($1, $2, $3, $4) RETURNING *`,
+  [name, email, message,image]
 );
 if(result){
 
@@ -940,12 +1017,78 @@ if(result){
 
 });
 
-app.post('/book-ride', async (req, res) => {
+
+
+app.post('/add-stops', async (req, res) => {
+  try {
+    const { booking_code, coords, user_id, place } = req.body;
+
+    console.log('add stops request data:', req.body);
+
+    // Get driver email from bookings table
+    const driverEmailQuery = `SELECT driver_id FROM bookings WHERE booking_code = $1`;
+    const driverEmailResult = await pool.query(driverEmailQuery, [booking_code]);
+    const driverId = driverEmailResult.rows[0].driver_id;
+
+    const driverEmailQuery2 = `SELECT email FROM drivers WHERE id = $1`;
+    const driverEmailResult2 = await pool.query(driverEmailQuery2, [driverId]);
+    const driverEmail = driverEmailResult2.rows[0].email;
+
+    // Insert into ride stops table
+    const insertRideStopsQuery = `INSERT INTO ride_stops (place, latitude, longitude, user_id, code) VALUES ($1, $2, $3, $4, $5)`;
+    await pool.query(insertRideStopsQuery, [place, coords.lat, coords.lng, user_id, booking_code]);
+
+    // Send email to driver
+    sendMailMessage(`New ride stop added, for current onging pickup`, driverEmail, `Ride Stop Update`);
+
+    res.json({ message: 'Ride stop added successfully', status: true });
+  } catch (err) {
+    console.error(err);
+    res.status(400).json({ message: 'Internal server error', status: false });
+  }
+});
+
+
+app.post('/edit-destination', async (req, res) => {
+  try {
+    const { booking_code, coords, user_id, place } = req.body;
+
+    console.log('edit destination request data:', req.body);
+
+    // Update destination in database
+    const updateDestinationQuery = `UPDATE bookings SET destination_latitude = $1, destination_longitude = $2, destination_place = $3 WHERE booking_code = $4`;
+    await pool.query(updateDestinationQuery, [coords.lat, coords.lng, place, booking_code]);
+
+
+    // Get driver email from bookings table
+    const driverEmailQuery = `SELECT driver_id FROM bookings WHERE booking_code = $1`;
+    const driverEmailResult = await pool.query(driverEmailQuery, [booking_code]);
+    const driverId = driverEmailResult.rows[0].driver_id;
+
+    const driverEmailQuery2 = `SELECT email FROM drivers WHERE id = $1`;
+    const driverEmailResult2 = await pool.query(driverEmailQuery2, [driverId]);
+    const driverEmail = driverEmailResult2.rows[0].email;
+
+    // Send email to driver
+    sendMailMessage(`Destination updated for booking #${booking_code}. The destination for your current ride has been updated`, driverEmail, `Current Ride Destination Changed`);
+
+    res.json({ message: 'Destination updated successfully', status: true });
+  } catch (err) {
+    console.error(err);
+    res.status(400).json({ message: 'Internal server error', status: false });
+  }
+});
+
+
+app.post('/book-ride', async(req, res) => {
   try {
     const { driver_id, passenger_id, from_latitude, from_longitude, destination_latitude, 
-      destination_longitude, book_amount, place, car_id, destination_place, stop_latitude, stop_longitude } = req.body;
+      destination_longitude, book_amount, place, car_id, destination_place, stop_latitude, stop_longitude, stop_place } = req.body;
 
     // Input validation
+
+    
+
     if (!passenger_id || !from_latitude || !from_longitude || !destination_latitude || !destination_longitude || !book_amount) {
       return res.status(400).json({ message: 'Required fields are missing', status: false });
     }
@@ -966,6 +1109,10 @@ app.post('/book-ride', async (req, res) => {
       }
 
     }
+
+      const insertRideStopsQuery = `INSERT INTO ride_stops (place, latitude, longitude, user_id, code) VALUES ($1, $2, $3, $4, $5)`;
+    await pool.query(insertRideStopsQuery, [stop_place, stop_latitude, stop_longitude, passenger_id, bookingCode]);
+
 
     const currentTime = new Date();
 
@@ -994,6 +1141,7 @@ const getDriverQuery = {
 };
 
 const driverRes = await pool.query(getDriverQuery);
+
 
 console.log('driver data:',driverRes)
 sendMailMessage(`You have a ride request at Pickup location: ${place} - Destination: ${destination_place} . Passenger is expecting you. Accept or Reject ride`,driverRes.rows[0].email, 'New RIde Request(View notification)')
@@ -1262,6 +1410,76 @@ app.post('/fetch-balance', async (req, res) => {
 });
 
 
+
+app.post('/get-booking', async (req, res) => {
+  try {
+    const { id } = req.body;
+
+    console.log('Fetch booking data request:', req.body);
+
+    // Fetch booking status from database
+    const result = await pool.query(
+      `SELECT * FROM bookings 
+       WHERE booking_code = $1`,
+      [id]
+      
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Booking not found', ok: false });
+    }
+
+    const bookingsData = result.rows;
+    const bookingsArray = [];
+
+    for (const booking of bookingsData) {
+      const cars = await pool.query(
+        'SELECT * FROM uploaded_cars WHERE driver_id = $1',
+        [booking.driver_id]
+      );
+
+      const fetchDrivers = await pool.query('SELECT * FROM drivers WHERE id = $1', [booking.driver_id]);
+      const fetchPassenger = await pool.query('SELECT * FROM users WHERE id = $1', [booking.passenger_id]);
+
+
+      
+      const carDetails = cars.rows.length > 0
+        ? {
+          carName: cars.rows[0].car_model,
+          pickupType: cars.rows[0].pickupType,
+          seat: cars.rows[0].seats,
+        }
+        : {
+          carName: 'None',
+          seat: 'None',
+          pickupType: 'None'
+        };
+
+      // Fetch ride stops for the booking
+      const rideStopsQuery = `SELECT * FROM ride_stops WHERE code = $1`;
+      const rideStopsResult = await pool.query(rideStopsQuery, [booking.booking_code]);
+      const rideStops = rideStopsResult.rows;
+
+      bookingsArray.push({
+        info: booking,
+        car: cars.rows[0],
+        driver: fetchDrivers.rows[0],
+        passenger: fetchPassenger.rows[0],
+        cancelCharge: 2,
+        rideStops: rideStops
+      });
+    }
+
+    res.status(200).json({
+      message: 'Bookings fetched successfully',
+      status: true,
+      bookings: bookingsArray,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal Server Error', status: false, error: error.message });
+  }
+});
+
 app.post('/bookings', async (req, res) => {
   try {
     const { status, userId } = req.body;
@@ -1282,8 +1500,6 @@ app.post('/bookings', async (req, res) => {
     const bookingsData = result.rows;
     const bookingsArray = [];
 
-
-
     for (const booking of bookingsData) {
       const cars = await pool.query(
         'SELECT * FROM uploaded_cars WHERE driver_id = $1',
@@ -1291,8 +1507,10 @@ app.post('/bookings', async (req, res) => {
       );
 
       const fetchDrivers = await pool.query('SELECT * FROM drivers WHERE id = $1', [booking.driver_id]);
+      const fetchPassenger = await pool.query('SELECT * FROM users WHERE id = $1', [booking.passenger_id]);
 
 
+      
       const carDetails = cars.rows.length > 0
         ? {
           carName: cars.rows[0].car_model,
@@ -1302,13 +1520,21 @@ app.post('/bookings', async (req, res) => {
         : {
           carName: 'None',
           seat: 'None',
-          pickupType:'None'
+          pickupType: 'None'
         };
+
+      // Fetch ride stops for the booking
+      const rideStopsQuery = `SELECT * FROM ride_stops WHERE code = $1`;
+      const rideStopsResult = await pool.query(rideStopsQuery, [booking.booking_code]);
+      const rideStops = rideStopsResult.rows;
 
       bookingsArray.push({
         info: booking,
-        car: carDetails,
-        driver: fetchDrivers.rows[0]
+        car: cars.rows[0],
+        driver: fetchDrivers.rows[0],
+        passenger: fetchPassenger.rows[0],
+        cancelCharge: 2,
+        rideStops: rideStops
       });
     }
 
@@ -1322,7 +1548,6 @@ app.post('/bookings', async (req, res) => {
     res.status(500).json({ message: 'Internal Server Error', status: false, error: error.message });
   }
 });
-
 
 app.post('/vehicles/delete-vehicle', async (req, res) => {
   console.log('delete vehicle body data', req.body)
@@ -1819,8 +2044,8 @@ app.post('/recent-chats', async (req, res) => {
       return {
         ...chat,
         time_sent: timeAgo,
-        driver_name: driver.rows[0]?.name,
-        passenger_name: passenger.rows[0]?.name,
+        driver: driver.rows[0],
+        passenger: passenger.rows[0],
       };
     }));
 
@@ -2128,6 +2353,27 @@ app.post('/verify-otp', async (req, res) => {
 });
 
 
+
+app.post('/update-ride-preference', async (req, res) => {
+
+
+  console.log(' RIDE PREFERENVCE REQUEST BODY', req.body);
+
+  const { type, id } = req.body;
+
+
+
+  try {
+      await pool.query('UPDATE drivers SET rides_preference = $1 WHERE id = $2', [type, id]);
+      res.status(200).json({ message: 'Queued rides preference updated!', status: true });
+
+  } catch (error) {
+    console.error('SQL Error:', error);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+
 app.post('/upload-car', async (req, res) => {
   const { driver_id, car_model, car_color, car_name, car_image } = req.body;
 
@@ -2149,6 +2395,36 @@ app.post('/upload-car', async (req, res) => {
     res.status(500).json({ message: 'Internal Server Error' });
   }
 });
+
+
+app.post('/submit-kyc', async (req, res) => {
+  const { id, email, name, type, front, back } = req.body;
+
+  const data = {
+    email,
+    name,
+    type,
+    front,
+    back,
+    id
+  }
+
+  console.log('submitting KYC request:', data)
+
+  // Save the uploaded car to the database
+  try {
+    await pool.query(
+      'INSERT INTO kyc (name, driver_id, email, front, back, type) VALUES ($1, $2, $3, $4, $5, $6)',
+      [ name, id, email, front, back, type]
+    );
+    sendMailMessage('We have received your documents. Our team will review it within 48hrs', email, 'Pending: KYC Verification Notice')
+    res.json({ message: 'Document uploaded successfully! Do not re-submit data.', status: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
 
 
 app.post('/transactions', async (req, res) => {
