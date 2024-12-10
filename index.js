@@ -902,11 +902,29 @@ app.post('/fetch-drivers', async (req, res) => {
         parseFloat(destinationLongitude)
       );
 
+      
+
       const totalDistance = pickupDistance + destinationDistance;
       const speed = 40 / 60; // km per minute
       const baseFare = 0.12; // in dollars
       const perKilometerFare = 1.03; // in dollars
-      const totalFare = new Intl.NumberFormat().format(baseFare + totalDistance * perKilometerFare);
+      
+      // Introduce dynamic pricing
+      let fareMultiplier = 1;
+      if (totalDistance < 5) { 
+        
+        // shorter rides (less than 5 km)
+        fareMultiplier = 1.2; // increase fare by 20%
+      } else if (totalDistance > 20) { // longer rides (more than 20 km)
+        fareMultiplier = 0.8; // decrease fare by 20%
+      }
+
+      if (cars.pickuptype === 'XL' || cars.pickuptype === 'PET') {
+        fareMultiplier *= 1.33; // increase fare by 20% for XL or PET pickup types
+      }
+      
+      const totalFare = new Intl.NumberFormat().format(baseFare + totalDistance * perKilometerFare * fareMultiplier);
+    
       const etaInMinutes = Math.floor(totalDistance / speed);
       let eta;
       if (etaInMinutes < 60) {
