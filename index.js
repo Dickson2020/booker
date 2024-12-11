@@ -9,11 +9,6 @@ const crypto = require('crypto');
 
 
 
-const pool = new Pool({
-  connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
-})
-
-
 /*
 
 
@@ -30,7 +25,15 @@ const pool = new Pool({
 
 
 
+
+
 */
+
+const pool = new Pool({
+  connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
+})
+
+
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
