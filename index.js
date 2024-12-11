@@ -7,11 +7,15 @@ const port = process.env.PORT || 9000; //for production use 3000
 const crypto = require('crypto');
 
 
+
+
 const pool = new Pool({
   connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
 })
 
+
 /*
+
 
 
 const pool = new Pool({
@@ -21,6 +25,7 @@ const pool = new Pool({
   password: 'developer@100',
   port: 5432
 });
+
 
 
 
@@ -1128,10 +1133,15 @@ app.post('/book-ride', async(req, res) => {
 
     }
 
+    if(stop_latitude && stop_longitude){
+      console.log('values not null')
       const insertRideStopsQuery = `INSERT INTO ride_stops (place, latitude, longitude, user_id, code) VALUES ($1, $2, $3, $4, $5)`;
-    await pool.query(insertRideStopsQuery, [stop_place, stop_latitude, stop_longitude, passenger_id, bookingCode]);
+      await pool.query(insertRideStopsQuery, [stop_place, stop_latitude, stop_longitude, passenger_id, bookingCode]);
+  
+  
+    }
 
-
+    
     const currentTime = new Date();
 
 // Format date and time using toLocaleString
@@ -1646,6 +1656,7 @@ app.post('/vehicles/get-vehicles', async (req, res) => {
 
 app.post('/vehicle/register', async (req, res) => {
   console.log('register vehicle body data', req.body)
+ 
   try {
     const {
       driver_id,
