@@ -6,6 +6,11 @@ const nodemailer = require('nodemailer');
 const port = process.env.PORT || 9000; //for production use 3000
 const crypto = require('crypto');
 
+const pool = new Pool({
+  connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
+})
+
+
 
 
 
@@ -22,16 +27,10 @@ const pool = new Pool({
 });
 
 
-
-
-
-
-
 */
 
-const pool = new Pool({
-  connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
-})
+
+
 
 
 app.use((req, res, next) => {
@@ -365,7 +364,7 @@ app.post('/account/driver/fetch-updates', async (req, res) => {
 
 app.post('/driver/update-status', async (req, res) => {
   try {
-    const { id, car_id } = req.body;
+    const { id } = req.body;
 
     console.log('update driver status request', req.body)
     // Validate input
@@ -373,42 +372,6 @@ app.post('/driver/update-status', async (req, res) => {
       return res.status(400).json({ message: 'Driver ID is required', status: false });
     }
 
-
-    if(car_id != ""){
-
-    
-    const getCarCurrentStatusQuery = {
-      text: `SELECT status FROM uploaded_cars WHERE id = $1`,
-      values: [car_id],
-    };
-
-    const carStatusResult = await pool.query(getCarCurrentStatusQuery);
-
-    if (carStatusResult.rows.length === 0) {
-      return res.status(404).json({ message: 'Vehicle not found', status: false });
-    }
-
-    const carCurrentStatus = carStatusResult.rows[0].status;
-    const carNewStatus = carCurrentStatus? false : true;
-
-    const updateCarQuery = {
-      text: `UPDATE uploaded_cars SET status = $1 WHERE id = $2`,
-      values: [carNewStatus, car_id],
-    };
-
-    console.log('new car status: '+carNewStatus)
-
-
-    const updateCarStatus = await pool.query(updateCarQuery);
-    if(updateCarStatus){
-      console.log('car status updated')
-
-    }else{
-      console.log('car status not updated')
-
-    }
-
-  }
     // Get current active_status
     const getCurrentStatusQuery = {
       text: `SELECT active_status FROM drivers WHERE id = $1`,
@@ -847,7 +810,7 @@ app.post('/fetch-drivers', async (req, res) => {
       return res.status(400).json({
         message: 'Pickup and destination coordinates are required',
         status: false,
-        drivers:[]
+        drivers: []
       });
     }
 
@@ -863,14 +826,14 @@ app.post('/fetch-drivers', async (req, res) => {
       AND latitude != ''
       AND longitude != ''
       ORDER BY id DESC`,
-      [pickupLatitude, pickupLongitude,1]
+      [pickupLatitude, pickupLongitude, 1]
     );
 
     if (activeDrivers.rows.length === 0) {
       return res.status(404).json({
         message: 'No active drivers found within the specified radius',
         status: false,
-        drivers:[]
+        drivers: []
       });
     }
 
@@ -880,7 +843,6 @@ app.post('/fetch-drivers', async (req, res) => {
         'SELECT * FROM uploaded_cars WHERE driver_id = $1',
         [driver.id]
       );
-      
 
       const reviews = await pool.query(
         `SELECT dr.*,
@@ -899,8 +861,7 @@ app.post('/fetch-drivers', async (req, res) => {
         [driver.id]
       );
 
-      
-      const resolvedReviewsData =  reviews.rows;
+      const resolvedReviewsData = reviews.rows;
 
       const pickupDistance = driver.distance;
       const destinationDistance = calculateDistance(
@@ -910,29 +871,16 @@ app.post('/fetch-drivers', async (req, res) => {
         parseFloat(destinationLongitude)
       );
 
-      
-
       const totalDistance = pickupDistance + destinationDistance;
       const speed = 40 / 60; // km per minute
       const baseFare = 0.12; // in dollars
       const perKilometerFare = 1.03; // in dollars
-      
+
       // Introduce dynamic pricing
       let fareMultiplier = 1;
-      if (totalDistance < 5) { 
-        
-        // shorter rides (less than 5 km)
-        fareMultiplier = 1.2; // increase fare by 20%
-      } else if (totalDistance > 20) { // longer rides (more than 20 km)
-        fareMultiplier = 0.8; // decrease fare by 20%
-      }
 
-      if (cars.pickuptype === 'xl' || cars.pickuptype === 'pet') {
-        fareMultiplier *= 1.33; // increase fare by 20% for XL or PET pickup types
-      }
-      
       const totalFare = new Intl.NumberFormat().format(baseFare + totalDistance * perKilometerFare * fareMultiplier);
-    
+
       const etaInMinutes = Math.floor(totalDistance / speed);
       let eta;
       if (etaInMinutes < 60) {
@@ -943,38 +891,85 @@ app.post('/fetch-drivers', async (req, res) => {
         eta = `${hours}h ${remainingMinutes}mins`;
       }
 
-
-      let cent = ''
-      let actualVal = ''
-      if(totalFare.includes(".")){
-        cent = totalFare.split(".")[1]
-        actualVal = totalFare.split(".")[0]
-      }else{
-        cent = '00'
-        actualVal = totalFare
+      let cent = '';
+      let actualVal = '';
+      if (totalFare.includes('.')) {
+        cent = totalFare.split('.')[1];
+        actualVal = totalFare.split('.')[0];
+      } else {
+        cent = '00';
+        actualVal = totalFare;
       }
 
+      let rideLength = []
+
       if (cars.rows.length > 0) {
+        const promises = cars.rows.map(async (car) => {
+          const fetchRideOptions = await pool.query(
+            'SELECT * FROM ride_options WHERE ride_id = $1',
+            [car.id]
+          );
+      
+          const rideOptions = fetchRideOptions.rows;
+      
+          const updatedCars = rideOptions.map((rideOption) => {
+            const updatedCar = { ...car };
+                  updatedCar.id = rideOption.id; // Use ride option id as car id
+
+            updatedCar.pickuptype = rideOption.ride_option;
+
+  // Adjust ETA and fare for priority rides
+  if (rideOption.ride_option === 'priority') {
+    const etaInMinutesx = Math.floor(etaInMinutes);
+    updatedCar.eta = Math.max(etaInMinutesx - 1, 0);
+    updatedCar.fare = (parseFloat(totalFare) - 0.5).toFixed(2);
+  } else {
+    updatedCar.eta = etaInMinutes;
+    updatedCar.fare = totalFare;
+  }
+
+
+            return updatedCar;
+          });
+      
+          return updatedCars;
+        });
+      
+        const allUpdatedCars = await Promise.all(promises);
+      
+        const flatUpdatedCars = allUpdatedCars.flat();
+      
+        // Sort cars based on pickup type and driver distance in DESC order
+        flatUpdatedCars.sort((a, b) => {
+          if (a.pickuptype === 'priority' && b.pickuptype !== 'priority') {
+            return -1;
+          } else if (a.pickuptype !== 'priority' && b.pickuptype === 'priority') {
+            return 1;
+          } else {
+            return (b.driver_id.distance - a.driver_id.distance) || (b.distance - a.distance);
+          }
+        });
+      
         drivers.push({
           ...driver,
-          cars: cars.rows,
+          cars: flatUpdatedCars,
+          rideOptionsLength: flatUpdatedCars.length,
           eta: `${eta}`,
           fare: `${actualVal}`,
           fareCent: cent,
           reviews: resolvedReviewsData,
         });
       }
-    }
+    
 
-    res.status(200).json({ drivers, status: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Internal Server Error', status: false });
-  }
-});
-
-
-
+      }
+        
+        res.status(200).json({ drivers, status: true });
+        } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Internal Server Error', status: false });
+        }
+        });
 app.post('/fetch-chats', async (req, res) => {
   try {
     const { driver_id, passenger_id } = req.body;
@@ -1109,7 +1104,7 @@ app.post('/edit-destination', async (req, res) => {
 app.post('/book-ride', async(req, res) => {
   try {
     const { driver_id, passenger_id, from_latitude, from_longitude, destination_latitude, 
-      destination_longitude, book_amount, place, car_id, destination_place, stop_latitude, stop_longitude, stop_place } = req.body;
+      destination_longitude, book_amount, place, car_id, destination_place, stop_latitude, stop_longitude, stop_place, pickuptype } = req.body;
 
     // Input validation
 
@@ -1159,11 +1154,12 @@ const formattedDateTime = currentTime.toLocaleString('en-US', {
 });
 
 
+const hailed = 0
    // Insert booking into database
 const result = await pool.query(
-  `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime, stop_latitude, stop_longitude)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
-  [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, 'pending', bookingCode, driver_id, place, car_id, destination_place, formattedDateTime, stop_latitude, stop_longitude]
+  `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime, stop_latitude, stop_longitude, pickuptype, hailed)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
+  [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, 'pending', bookingCode, driver_id, place, car_id, destination_place, formattedDateTime, stop_latitude, stop_longitude, pickuptype, hailed]
 );
 const getDriverQuery = {
   text: `SELECT * FROM drivers
@@ -1176,7 +1172,6 @@ const driverRes = await pool.query(getDriverQuery);
 
 console.log('driver data:',driverRes)
 sendMailMessage(`You have a ride request at Pickup location: ${place} - Destination: ${destination_place} . Passenger is expecting you. Accept or Reject ride`,driverRes.rows[0].email, 'New RIde Request(View notification)')
-
 
     res.status(201).json({
       message: 'Ride has been booked! Driver will be notified.',
@@ -1208,6 +1203,16 @@ app.post('/hail-passenger', async (req, res) => {
       values: [booking_code],
     };
 
+    const hailed = 1
+
+     const updateBookingStat = {
+      text: `UPDATE bookings hailed = $1
+             WHERE booking_code = $2`,
+      values: [hailed, booking_code],
+    };
+
+    await pool.query(updateBookingStat);
+
     const passengerResult = await pool.query(getPassengerQuery);
 
     if (passengerResult.rows.length === 0) {
@@ -1215,6 +1220,7 @@ app.post('/hail-passenger', async (req, res) => {
     }
 
     const passengerId = passengerResult.rows[0].passenger_id;
+
 
     // Get user's email from users table
     const getUserEmailQuery = {
@@ -1675,10 +1681,11 @@ app.post('/vehicle/register', async (req, res) => {
     } = req.body;
 
     // Validate input data
-    if (!driver_id || !car_model || !car_color || !car_name || !seats || !car_number || !phone || !pickuptype) {
+    if (!driver_id || !car_model || !car_color || !car_name || !seats || !car_number || !phone ) {
       return res.status(400).json({ message: 'Missing required fields', status: false });
     }
 
+    
     // Insert data into uploaded_cars table
     const query = {
       text: `INSERT INTO uploaded_cars (
@@ -1704,14 +1711,32 @@ app.post('/vehicle/register', async (req, res) => {
         seats,
         car_number,
         phone,
-        pickuptype,
+        '',
         latitude,
         longitude,
         false
       ],
     };
-
+  
     const result = await pool.query(query);
+
+if (result) {
+  const queries = pickuptype.map((option) => {
+    const insertOptions = {
+      text: `INSERT INTO ride_options (
+        ride_id,
+        ride_option
+      ) VALUES ($1, $2) RETURNING *`,
+      values: [result.rows[0].id, option],
+    };
+    return pool.query(insertOptions);
+  });
+
+  await Promise.all(queries);
+
+  console.log('ride options added');
+}
+
 
     // Update organisation column in drivers table
     const updateQuery = {
