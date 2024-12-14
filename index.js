@@ -6,11 +6,10 @@ const nodemailer = require('nodemailer');
 const port = process.env.PORT || 9000; //for production use 3000
 const crypto = require('crypto');
 
+
 const pool = new Pool({
   connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
 })
-
-
 
 
 
@@ -25,6 +24,8 @@ const pool = new Pool({
   password: 'developer@100',
   port: 5432
 });
+
+
 
 
 */
@@ -157,7 +158,7 @@ async function sendMail(otp, receiver, subject) {
 app.get('/', async (req, res) => {
   res.send('Yasser APP API');
 
-  await sendMail('999','anoibi47@gmail.com','otp')
+  await sendMail('we are live!','anoibi47@gmail.com','API node server up and running')
   
 });
 
@@ -1203,10 +1204,10 @@ app.post('/hail-passenger', async (req, res) => {
       values: [booking_code],
     };
 
-    const hailed = 1
+    const hailed = 1;
 
      const updateBookingStat = {
-      text: `UPDATE bookings hailed = $1
+      text: `UPDATE bookings SET hailed = $1
              WHERE booking_code = $2`,
       values: [hailed, booking_code],
     };
