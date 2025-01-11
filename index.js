@@ -5,17 +5,14 @@ const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 const port = process.env.PORT || 9000; //for production use 3000
 const crypto = require('crypto');
+const secretStripeKey = 'sk_test_51QFKpS2M46jo8aemybvKvZ24vwGOfCY6eQjVVXhMS2f7vDagFBWNo5sxvG2iVoYwqkaHPAg8EljF806q4Pq6Skg2004nLvaZmY'
 
-
-const pool = new Pool({
-  connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
-})
+const stripePublishableApiKey = 'pk_test_51QFKpS2M46jo8aemG6WQf3dh6kapHTGikUEeXAwnxt1zDlxAKsk5p5n6r2FsHgcCfPRkBTWo5eaqKpGeuyAQS1jE00dX85hNsc'
+const stripe = require('stripe')(secretStripeKey);
 
 
 
 /*
-
-
 
 const pool = new Pool({
   user: 'postgres',
@@ -28,8 +25,13 @@ const pool = new Pool({
 
 
 
+
+
 */
 
+const pool = new Pool({
+  connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
+})
 
 
 
@@ -42,6 +44,597 @@ app.use((req, res, next) => {
 
 app.use(express.json()); // Parse JSON bodies
 app.use(express.urlencoded({ extended: true }));
+
+// This example sets up an endpoint using the Express framework.
+// Watch this video to get started: https://youtu.be/rPR2aJ6XnAc.
+app.post('/webhook', express.json({type: 'application/json'}), async (request, response) => {
+  try {
+    const event = request.body;
+
+
+    const paymentIntent = event.data.object;
+
+    console.log('webhook data: ', event)
+    // Handle the event
+    switch (event.type) {
+      case 'payment_intent.succeeded':
+try{
+  
+  const paymentIntentVerification = await stripe.paymentIntents.confirm(
+    paymentIntent?.id,
+    {
+      payment_method: paymentIntent?.payment_method,
+      return_url: 'https://www.google.com',
+    }
+  );
+  console.log('paymentIntentVerification:',paymentIntentVerification)
+
+
+}catch(err){}
+
+
+        // Get user ID from email
+        const getUserQuery = await pool.query('SELECT * FROM users WHERE stripe_customer_id = $1', [paymentIntent?.customer]);
+        const userId = getUserQuery.rows[0].id;
+        const email= getUserQuery.rows[0].email;
+
+        console.log('user id:,',userId)
+
+        // Generate a unique transaction ID
+        let transactionId;
+        let isUnique = false;
+
+        while (!isUnique) {
+          transactionId = uuidv4();
+          const existingTransaction = await pool.query(
+            'SELECT * FROM transactions WHERE transaction_id = $1',
+            [transactionId]
+          );
+
+          if (existingTransaction.rows.length === 0) {
+            isUnique = true;
+          }
+        }
+
+        // Get user's previous balance
+        const getUserPreviousBalance = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+
+        // Send deposit notification email
+        sendMailMessage('Transaction Notification, '+getUserPreviousBalance.rows[0].name +', you have received a payment of $'+paymentIntent.amount/100, email, 'Transaction Notification')
+
+        // Update account balance
+        const newBalance = Number(getUserPreviousBalance.rows[0].account_balance) + Number(paymentIntent.amount/100);
+        await pool.query(
+          'UPDATE users SET account_balance =  $1 WHERE id = $2',
+          [newBalance, userId]
+        );
+
+        // Insert transaction
+        const charges =  ((paymentIntent.amount/100) * 0.014)  //1.4 percent charge
+        await pool.query(
+          'INSERT INTO transactions (user_id, description, amount, status, transaction_date, transaction_type, transaction_id,intent,intent_type, charges) VALUES ($1, $2, $3, $4, $5, $6, $7,$8, $9, $10)',
+          [
+            userId,
+            'Wallet deposit',
+            ((paymentIntent.amount/100) - charges),
+            'Successful',
+            new Date().toISOString(),
+            'Credit',
+            transactionId,
+            paymentIntent?.id,
+            'payment',
+            charges + '%'
+          ]
+        );
+
+        // Return updated user data
+        const updatedUser = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+
+        // Return a response to acknowledge receipt of the event
+        response.json({received: true});
+        break;
+
+        case 'payout.failed':
+          // Then define and call a method to handle the successful attachment of a PaymentMethod.
+          // handlePaymentMethodAttached(paymentMethod);
+       // Get user ID from email
+       const getUserQueryTrx = await pool.query('SELECT * FROM transactions WHERE intent = $1', [paymentIntent?.id]);  
+       const getUserQueryUser = await pool.query('SELECT * FROM drivers WHERE id = $1', [getUserQueryTrx?.rows[0]?.user_id]);
+       const emailUser = getUserQueryUser.rows[0]?.email;
+    
+       console.log(' getUserQueryTrx.rows[0]:', getUserQueryTrx.rows[0])
+
+       console.log(' getUserQueryUser.rows[0]:', getUserQueryUser.rows[0])
+
+    
+           sendMailMessage(paymentIntent?.failure_message, emailUser, 'Payout failed')
+
+        await pool.query(
+              'UPDATE transactions SET status = $1, description = $2 WHERE intent = $3',
+              ['Failed','Error: ' + paymentIntent?.failure_message,paymentIntent?.id]
+            );
+  
+          break;
+        // ... handle other event types
+      
+      case 'payout.paid':
+        // Then define and call a method to handle the successful attachment of a PaymentMethod.
+        // handlePaymentMethodAttached(paymentMethod);
+     // Get user ID from email
+     const getUserQueryTrx2 = await pool.query('SELECT * FROM transactions WHERE intent = $1', [paymentIntent?.id]);  
+     const getUserQueryUser2 = await pool.query('SELECT * FROM drivers WHERE id = $1', [getUserQueryTrx2?.rows[0]?.user_id]);
+     const emailUser2 = getUserQueryUser2.rows[0]?.email;
+     const userIdx = getUserQueryUser2.rows[0]?.id;
+
+     console.log(' getUserQueryUser2.rows[0]:', getUserQueryUser2.rows[0])
+
+     console.log('user id:,',userIdx)
+     sendMailMessage('Payout of $'+paymentIntent?.amount+', was successfully processed!', emailUser2, 'Payout Successful')
+
+     
+    
+        await pool.query(
+            'UPDATE transactions SET status = $1, description = $2 WHERE intent = $3 ',
+            ['Successful','Payout to Bank Successful',paymentIntent?.id]
+          );
+
+        break;
+      // ... handle other event types
+      default:
+        console.log(`Unhandled event type ${event.type}`);
+    }
+  } catch (error) {
+    console.error(error);
+    response.status(500).json({received: false});
+  }
+});
+
+
+
+app.post('/initiate-withdrawal', async (req, res) => {
+  try {
+    const { id, amount, type, customerId } = req.body;
+
+    console.log('initiate withdrawal:', req.body);
+    let TOKEN = id;
+    let source_type = type;
+
+    const query = {
+      text: `SELECT * FROM drivers
+             WHERE id = $1;`,
+      values: [customerId]
+    };
+
+    const fetchCustomerStripeID = await pool.query(query);
+    const customerIdResponse = fetchCustomerStripeID.rows[0];
+    let customerIDStripe = '';
+
+    if (customerIdResponse?.stripe_account_id.length > 1) {
+      customerIDStripe = customerIdResponse?.stripe_account_id;
+
+      const balance = await stripe.balance.retrieve(
+        {
+          expand: ['instant_available.net_available'],
+        },
+        {
+          stripeAccount: customerIDStripe,
+        }
+      );
+
+      const availableStripeBalance = balance.instant_available[0]?.net_available[0]?.amount;
+
+      console.log('availableStripeBalance: ',balance)
+
+      if (availableStripeBalance == 0 || availableStripeBalance < amount) {
+         res.status(500).json({ message: 'Insufficient wallet balance', status: false });
+         
+      }else{
+
+      const payout = await stripe.payouts.create(
+        {
+          amount: amount, // Use the amount from the request body
+          currency: 'usd',
+          method: 'instant',
+          destination: TOKEN,
+        },
+        {
+          stripeAccount: customerIDStripe,
+        }
+      );
+
+      console.log('payout: ', payout);
+
+
+        // Generate a unique transaction ID
+        let transactionId;
+        let isUnique = false;
+
+        while (!isUnique) {
+          transactionId = uuidv4();
+          const existingTransaction = await pool.query(
+            'SELECT * FROM transactions WHERE transaction_id = $1',
+            [transactionId]
+          );
+
+          if (existingTransaction.rows.length === 0) {
+            isUnique = true;
+          }
+        }
+
+        // Get user's previous balance
+     
+
+      if(payout?.status){
+        await pool.query(
+          'INSERT INTO transactions (user_id, description, amount, status, transaction_date, transaction_type, transaction_id, intent,intent_type, charges ) VALUES ($1, $2, $3, $4, $5, $6, $7,$8,$9, $10)',
+          [
+            customerId,
+            payout?.type == 'bank_account'? 'Payout to Bank created' : 'Payout created',
+            amount,
+            'Pending',
+            new Date().toISOString(),
+            'Debit',
+            transactionId,
+            payout?.id,
+            'external-payout',
+            '0%'
+          ]
+        );
+      }
+
+       res.status(200).json({ message: 'Payout request has been initiated and pending and processing, you will be notified soon!', status: true });
+    }
+    } else {
+       res.status(500).json({ message: 'Invalid stripe customer ID', status: false });
+    }
+  } catch (error) {
+    console.error(error);
+     res.status(500).json({ message: 'An error occurred', status: false });
+  }
+});
+
+
+// Endpoint to update stripe_connect_id for a driver
+app.get('/onboard-stripe', (req, res) => {
+ 
+
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Success!</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          text-align: center;
+          padding: 20px;
+          background-color: #f9f9f9;
+        }
+        h1 {
+          font-size: 24px;
+          margin-bottom: 10px;
+        }
+        .button {
+          background-color: #4CAF50;
+          color: #fff;
+          padding: 12px 20px;
+          border: none;
+          border-radius: 5px;
+          cursor: pointer;
+        }
+        .button:hover {
+          background-color: #000;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>Stripe Connected!</h1>
+      <p>Please close this page and go back to the app.</p>
+      <button class="button" onclick="window.close()">Close Page</button>
+    </body>
+    </html>
+  `);
+});
+app.get('/refresh-account-link', async (req, res) => {
+  const { user, id, url } = req.query;
+  let customerId = user
+
+  console.log('refresh connect link',req.query)
+  try {
+
+
+
+
+    if (!id) {
+
+      const query = {
+        text: `UPDATE drivers
+               SET stripe_account_id = $1
+               WHERE id = $2;`,
+        values: [null, customerId]
+      
+      };
+      
+      // Execute query
+       await pool.query(query);
+      return res.status(400).send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Error</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              text-align: center;
+              padding: 20px;
+              background-color: #f9f9f9;
+            }
+            h1 {
+              font-size: 24px;
+              margin-bottom: 10px;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Error: Missing ID parameter</h1>
+          <p>Please provide a valid ID parameter.</p>
+        </body>
+        </html>
+      `);
+    }
+
+    const accountLink = await stripe.accountLinks.create({
+      account: id,
+      refresh_url: url + '/refresh-account-link?user='+user+'&url='+url+'&id=' + id,
+      return_url: url + '/onboard-stripe',
+      type: 'account_onboarding',
+    });
+
+    const link = accountLink.url;
+
+    console.log(accountLink);
+
+    return res.redirect(link);
+  } catch (error) {
+
+    console.log(error)
+
+    const query = {
+      text: `UPDATE drivers
+             SET stripe_account_id = $1
+             WHERE id = $2;`,
+      values: [null, customerId]
+    
+    };
+    
+    // Execute query
+     await pool.query(query);
+
+
+    return res.status(500).send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Error</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+            background-color: #f9f9f9;
+          }
+          h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+          }
+        </style>
+      </head>
+      <body>
+        <h1>Error: Failed to create account link</h1>
+        <p>Please try again later or contact support.</p>
+      </body>
+      </html>
+    `);
+
+    
+  }
+});
+
+app.post('/connect-wallet', async (req, res) => {
+  // Use an existing Customer ID if this is a returning customer.
+  const {customerId, url} = req.body
+
+  console.log('connect wallet: ', req.body)
+ 
+  const query = {
+    text: `SELECT * FROM drivers
+           WHERE id = $1;`,
+    values: [customerId]
+  };
+
+  // Execute query
+  const fetchCustomerStripeID = await pool.query(query);
+  let customerIdResponse = fetchCustomerStripeID.rows[0]
+  let customerIDStripe = '';
+
+  console.log(customerIdResponse)
+  let customerAccountId = customerIdResponse?.stripe_account_id
+if (customerIdResponse?.stripe_account_id === null) {
+ console.log('customer CONNECT ID does not exists')
+const account = await stripe.accounts.create({
+  country: 'US',
+  email: customerIdResponse.email,
+  controller: {
+    fees: {
+      payer: 'application',
+    },
+    losses: {
+      payments: 'application',
+    },
+    stripe_dashboard: {
+      type: 'none',
+    },
+    requirement_collection: 'application'
+  },
+   country: 'US',
+  capabilities: {
+    transfers: {
+      requested: true,
+    },
+  },
+});
+
+
+const query = {
+  text: `UPDATE drivers
+         SET stripe_account_id = $1
+         WHERE id = $2;`,
+  values: [account.id, customerId]
+
+};
+
+// Execute query
+ await pool.query(query);
+
+ console.log(account)
+
+      const accountLink = await stripe.accountLinks.create({
+        account: account.id,
+        refresh_url:  url + '/refresh-account-link?url='+url+'&user='+customerId+'&id='+ account.id,
+        return_url: url + '/onboard-stripe',
+        type: 'account_onboarding',
+      }); 
+
+      console.log(accountLink)  
+      
+       res.status(200).json({ message: 'Please you need to connect driver app to Stripe to start  collecting payout!', onboard: true, accountLink });
+
+ 
+  }else{
+
+    try{
+
+    const account = await stripe.accounts.retrieve(customerAccountId);
+
+    console.log('retrieve account data', account)
+
+    if(account?.charges_enabled){
+      res.status(200).json({ message: 'Account connected! Proceed', onboard: false , id: customerAccountId});
+    }else{
+      const accountLink = await stripe.accountLinks.create({
+        account: customerAccountId,
+        refresh_url:  url + '/refresh-account-link?url='+url+'&user='+customerId+'&id='+ customerAccountId,
+        return_url: url + '/onboard-stripe',
+        type: 'account_onboarding',
+      }); 
+
+      console.log(accountLink)  
+      
+       res.status(200).json({ message: 'Please you need to connect driver app to Stripe to start  collecting payout!', onboard: true, accountLink });
+
+    }
+  }catch(err){
+    const accountLink = await stripe.accountLinks.create({
+      account: customerAccountId,
+      refresh_url:  url + '/refresh-account-link?url='+url+'&user='+customerId+'&id='+ customerAccountId,
+      return_url: url + '/onboard-stripe',
+      type: 'account_onboarding',
+    }); 
+
+    console.log(accountLink)  
+    
+     res.status(200).json({ message: 'Please you need to connect driver app to Stripe to start  collecting payout!', onboard: true, accountLink });
+
+  }
+  
+
+  }
+
+});
+
+
+
+app.post('/payment-sheet', async (req, res) => {
+  // Use an existing Customer ID if this is a returning customer.
+  const {customerId, amount} = req.body
+
+  console.log('payment sheet: ',  req.body)
+
+  const query = {
+    text: `SELECT * FROM users
+           WHERE id = $1;`,
+    values: [customerId]
+  };
+
+  // Execute query
+  const fetchCustomerStripeID = await pool.query(query);
+  let customerIdResponse = fetchCustomerStripeID.rows[0]
+  let customerIDStripe = '';
+if (customerIdResponse?.stripe_customer_id !== "") {
+    customerIDStripe = customerIdResponse?.stripe_customer_id
+    console.log('stripe customer already exits')
+    if(customerIDStripe === null){
+      const customer = await stripe.customers.create();
+      customerIDStripe =  customer.id
+  
+       const query = {
+        text: `UPDATE users
+               SET stripe_customer_id = $1
+               WHERE id = $2;`,
+        values: [customerIDStripe, customerId]
+      };
+  
+      // Execute query
+     await pool.query(query);
+  
+    }
+  }else{
+  
+
+  }
+
+  console.log( "stripe_customer_id:", customerIDStripe)
+
+  if(customerIDStripe !== ""){
+
+  const ephemeralKey = await stripe.ephemeralKeys.create(
+    {customer: customerIDStripe},
+    {apiVersion: '2024-12-18.acacia'}
+  );
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: amount * 100,
+    currency: 'usd',
+    customer: customerIDStripe,
+    // In the latest version of the API, specifying the `automatic_payment_methods` parameter
+    // is optional because Stripe enables its functionality by default.
+    automatic_payment_methods: {
+      enabled: true,
+    },
+  });
+
+  res.json({
+    paymentId: paymentIntent?.id,
+    paymentIntent: paymentIntent.client_secret,
+    ephemeralKey: ephemeralKey.secret,
+    customer: customerIDStripe,
+    publishableKey: stripePublishableApiKey
+  });
+
+  }else{
+
+  console.log('Invalid stripe customer ID')
+      return res.status(400).json({ message: 'Invalid stripe customer ID', status: false });
+
+
+  }
+
+});
 
 const sendMailMessage = async (body,receiver,subject) => {
   console.log('sending mail');
@@ -363,15 +956,147 @@ app.post('/account/driver/fetch-updates', async (req, res) => {
 
 
 
+
+app.get('/stripe-api-key', (req, res) => {
+  try {
+    // Return Stripe API key
+    const apikey = '';
+    res.status(200).json({ apikey: stripePublishableApiKey, secretStripeKey, status: true });
+  } catch (error) {
+    // Handle internal server error
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+
 app.post('/driver/update-status', async (req, res) => {
   try {
-    const { id } = req.body;
+    const {id, url} = req.body
+
+    const customerId = id
 
     console.log('update driver status request', req.body)
     // Validate input
     if (!id) {
-      return res.status(400).json({ message: 'Driver ID is required', status: false });
+       res.status(400).json({ message: 'Driver ID is required', status: false , onboard: false });
     }
+
+
+    let CONNECT = false
+    
+      // Use an existing Customer ID if this is a returning customer.
+    
+      console.log('connect wallet: ', req.body)
+     
+      const query = {
+        text: `SELECT * FROM drivers
+               WHERE id = $1;`,
+        values: [customerId]
+      };
+    
+      // Execute query
+      const fetchCustomerStripeID = await pool.query(query);
+      let customerIdResponse = fetchCustomerStripeID.rows[0]
+      let customerIDStripe = '';
+    
+      console.log(customerIdResponse)
+      let customerAccountId = customerIdResponse?.stripe_account_id
+    if (customerIdResponse?.stripe_account_id === null) {
+     console.log('customer CONNECT ID does not exists')
+    const account = await stripe.accounts.create({
+      country: 'US',
+      email: customerIdResponse.email,
+      controller: {
+        fees: {
+          payer: 'application',
+        },
+        losses: {
+          payments: 'application',
+        },
+        stripe_dashboard: {
+          type: 'none',
+        },
+        requirement_collection: 'application'
+      },
+       country: 'US',
+      capabilities: {
+        transfers: {
+          requested: true,
+        },
+      },
+    });
+    
+    
+    const query = {
+      text: `UPDATE drivers
+             SET stripe_account_id = $1
+             WHERE id = $2;`,
+      values: [account.id, customerId]
+    
+    };
+    
+    // Execute query
+     await pool.query(query);
+    
+     console.log(account)
+    
+          const accountLink = await stripe.accountLinks.create({
+            account: account.id,
+            refresh_url:  url + '/refresh-account-link?url='+url+'&user='+customerId+'&id='+ account.id,
+            return_url: url + '/onboard-stripe',
+            type: 'account_onboarding',
+          }); 
+    
+          console.log(accountLink)  
+          CONNECT = true
+           res.status(200).json({ message: 'Please you need to connect driver app to Stripe to start collecting payout!', onboard: true, accountLink, status: true });
+    
+     
+      }else{
+    
+        try{
+    
+        const account = await stripe.accounts.retrieve(customerAccountId);
+    
+        console.log('retrieve account data', account)
+    
+        if(account?.charges_enabled){
+          console.log('account already connected')
+         // res.status(200).json({ message: 'Account connected! Proceed', onboard: false , id: customerAccountId, status: true});
+        }else{
+          const accountLink = await stripe.accountLinks.create({
+            account: customerAccountId,
+            refresh_url:  url + '/refresh-account-link?url='+url+'&user='+customerId+'&id='+ customerAccountId,
+            return_url: url + '/onboard-stripe',
+            type: 'account_onboarding',
+          }); 
+    
+          console.log(accountLink)  
+          
+          CONNECT = true
+           res.status(200).json({ message: 'Please you need to connect driver app to Stripe to start  collecting payout!', onboard: true, accountLink, status: true });
+    
+        }
+      }catch(err){
+        const accountLink = await stripe.accountLinks.create({
+          account: customerAccountId,
+          refresh_url:  url + '/refresh-account-link?url='+url+'&user='+customerId+'&id='+ customerAccountId,
+          return_url: url + '/onboard-stripe',
+          type: 'account_onboarding',
+        }); 
+    
+        console.log(accountLink)  
+
+        CONNECT = true
+        
+         res.status(200).json({ message: 'Please you need to connect driver app to Stripe to start  collecting payout!', onboard: true, accountLink, status: true });
+    
+      }
+      
+    
+      }
+    
+    
 
     // Get current active_status
     const getCurrentStatusQuery = {
@@ -382,8 +1107,8 @@ app.post('/driver/update-status', async (req, res) => {
     const result = await pool.query(getCurrentStatusQuery);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Driver not found', status: false });
-    }
+       res.status(404).json({ message: 'Driver not found', status: false, onboard: false });
+    }else{
 
     const currentStatus = result.rows[0].active_status;
     const newStatus = currentStatus == 1 ? 0 : 1;
@@ -397,12 +1122,153 @@ app.post('/driver/update-status', async (req, res) => {
     const updatedDriver = await pool.query(updateQuery);
 
     console.log(`Driver updated: ${updatedDriver.rows[0]}`);
-    res.status(200).json({ message: 'Status updated successfully!', status: true, driverstatus: newStatus });
+    if(!CONNECT){
+      res.status(200).json({ message: 'Status updated successfully!', status: true, driverstatus: newStatus, onboard: false });
+
+    }
+    }
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Internal Server Error', status: false });
+    res.status(500).json({ message: 'Internal Server Error', status: false, onboard: false });
   }
 });
+
+app.post('/wallet-summary', async (req, res) => {
+  const { driverID } = req.body;
+
+  if (!driverID) {
+    return res.status(400).json({ message: 'Driver ID is required' });
+  }
+
+  try {
+    const bookings = await pool.query({
+      text: `
+        SELECT book_amount, booktime
+        FROM bookings
+        WHERE driver_id = $1 AND status = 'completed'
+      `,
+      values: [driverID],
+    });
+
+    const currentDate = new Date();
+    const currentWeek = getWeekNumber(currentDate);
+    const currentMonth = currentDate.getMonth() + 1;
+    const currentYear = currentDate.getFullYear();
+
+    let weeklyTotal = 0;
+    let monthlyTotal = 0;
+    let yearlyTotal = 0;
+    let todayTotal = 0;
+
+    bookings.rows.forEach((booking) => {
+      const bookingDate = new Date(booking.booktime);
+      const bookingWeek = getWeekNumber(bookingDate);
+      const bookingMonth = bookingDate.getMonth() + 1;
+      const bookingYear = bookingDate.getFullYear();
+
+      if (bookingWeek === currentWeek && bookingYear === currentYear) {
+        weeklyTotal += parseFloat(booking.book_amount);
+      }
+
+      if (bookingMonth === currentMonth && bookingYear === currentYear) {
+        monthlyTotal += parseFloat(booking.book_amount);
+      }
+
+      if (bookingYear === currentYear) {
+        yearlyTotal += parseFloat(booking.book_amount);
+      }
+
+      if (
+        bookingDate.getDate() === currentDate.getDate() &&
+        bookingDate.getMonth() === currentDate.getMonth() &&
+        bookingDate.getFullYear() === currentDate.getFullYear()
+      ) {
+        todayTotal += parseFloat(booking.book_amount);
+      }
+    });
+
+    const chartData = [];
+    const colors = ['#177AD5', 'gray', '#177AD5', 'gray', '#177AD5', 'gray', '#177AD5'];
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    for (let i = 0; i < 7; i++) {
+      const dayTotal = bookings.rows.reduce((acc, booking) => {
+        const bookingDate = new Date(booking.booktime);
+        if (bookingDate.getDay() === i) {
+          return acc + parseFloat(booking.book_amount);
+        }
+        return acc;
+      }, 0);
+    
+      chartData.push({
+        value: dayTotal,
+        label: dayNames[i],
+        frontColor: colors[i],
+      });
+    }
+
+    return res.status(200).json({
+      weekly: weeklyTotal,
+      monthly: monthlyTotal,
+      yearly: yearlyTotal,
+      today: todayTotal,
+      chart: chartData,
+      status: true
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Internal Server Error',status:false });
+  }
+});
+
+// Helper function to get week number
+function getWeekNumber(date) {
+  const oneJan = new Date(date.getFullYear(), 0, 1);
+  return Math.ceil(
+    ((date - oneJan) / 86400000 + oneJan.getDay() + 1) / 7
+  );
+}
+
+// Helper function to get week number
+function getWeekNumber(date) {
+  const oneJan = new Date(date.getFullYear(), 0, 1);
+  return Math.ceil(
+    ((date - oneJan) / 86400000 + oneJan.getDay() + 1) / 7
+  );
+}
+
+// Helper function to get month name
+function getMonthName(monthNumber) {
+  const monthNames = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  return monthNames[monthNumber - 1];
+}
+
+// Helper function to get week number
+function getWeekNumber(date) {
+  const oneJan = new Date(date.getFullYear(), 0, 1);
+  return Math.ceil(
+    ((date - oneJan) / 86400000 + oneJan.getDay() + 1) / 7
+  );
+}
+
+// Helper function to get week number
+function getWeekNumber(date) {
+  const oneJan = new Date(date.getFullYear(), 0, 1);
+  return Math.ceil((((date - oneJan) / 86400000) + oneJan.getDay() + 1) / 7);
+}
 
 app.post('/driver/register', async (req, res) => {
   try {
@@ -432,7 +1298,7 @@ app.post('/driver/register', async (req, res) => {
     try {
       const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
 
-     await sendMail(otpCode, email,'Yasser - (OTP) for Verification');
+     await sendMail(otpCode, email,'Email Authentication Code');
 
 
       // Insert OTP into otp table
@@ -470,67 +1336,6 @@ function uuidv4() {
   });
 }
 
-app.get('/account/balance/:id/:amount', async (req, res) => {
-  const { id, amount } = req.params;
-
-  try {
-    // Generate a unique transaction ID
-    let transactionId;
-    let isUnique = false;
-
-    while (!isUnique) {
-      transactionId = uuidv4();
-      const existingTransaction = await pool.query(
-        'SELECT * FROM transactions WHERE transaction_id = $1',
-        [transactionId]
-      );
-
-      if (existingTransaction.rows.length === 0) {
-        isUnique = true;
-      }
-    }
-
-
-    const getUserPreviousBalance = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
-    sendMailMessage('Hi, '+getUserPreviousBalance.rows[0].name +', you have received a deposit of $'+amount, getUserPreviousBalance.rows[0].email, 'Yasser: Wallet Deposit Notification')
-    const newBalance = Number(getUserPreviousBalance.rows[0].account_balance) + Number(amount)
-    // Update account balance
-    await pool.query(
-      'UPDATE users SET account_balance =  $1 WHERE id = $2',
-      [newBalance, id]
-    );
-
-    // Insert transaction
-    await pool.query(
-      'INSERT INTO transactions (user_id, description, amount, status, transaction_date, transaction_type, transaction_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [
-        id,
-        'Account deposit',
-        amount,
-        'Successful',
-        new Date().toISOString(),
-        'Credit',
-        transactionId
-      ]
-    );
-
-    // Return updated user data
-    const updatedUser = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
-
-    res.send({
-      status: true,
-      message: 'Account balance updated successfully',
-      data: updatedUser.rows[0]
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({
-      status: false,
-      message: 'Database error',
-      data: null
-    });
-  }
-});
 
 app.get('/users/:id/update-position', async (req, res) => {
   try {
@@ -594,7 +1399,7 @@ app.post('/driver/update-geolocation', async (req, res) => {
     );
     res.status(200).json({ message: 'Geolocation updated!', status: true });
   } catch (error) {
-    console.error(error);
+    //console.error(error);
     res.status(500).json({ message: 'Internal Server Error', status: false });
   }
 });
@@ -687,33 +1492,228 @@ app.post('/register', async (req, res) => {
   }
 });
 
-app.post('/transactions', async (req, res) => {
+
+app.post('/add-payment-card', async (req, res) => {
   try {
+    const { cardNumber, cardExpMonth, cardExpYear, cardCvc, userId,cardName } = req.body;
+
+    console.log('request body:', req.body);
+    
+const token = await stripe.tokens.create({
+  card: {
+    number: cardNumber,
+    exp_month: cardExpMonth,
+    exp_year: cardExpYear,
+    cvc: cardCvc,
+  },
+});
+
+       // Fetch user balance
+       let result = await pool.query(
+        'SELECT stripe_account_id FROM drivers WHERE id = $1',
+        [userId]
+      );
+  
+      // Check if user exists
+      customerIDStripe = result.rows[0]?.stripe_account_id 
 
 
-    console.log('transaction req', req.body)
-
-    const { id } = req.body;
-
-    // Check if user exists
-    const history = await pool.query(
-      'SELECT * FROM transactions WHERE user_id = $1',
-      [id]
+    const externalAccount = await stripe.accounts.createExternalAccount(
+      customerIDStripe,
+      {
+        external_account: 'tok_visa_debit',
+      }
     );
 
-    if (history.rows.length > 0) {
-      return res.status(200).json({ data: history.rows, status: true });
-    }else{
-      return res.status(210).json({ message:'No transactions yet', status: false });
- 
-    }
-
-
   } catch (err) {
-    return res.status(501).json({ status: false, message:'Internal server error' });
+    console.log(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
   }
 });
 
+
+app.post('/delete-payment-method', async (req, res) => {
+  try {
+    const { id, type, stripeAccountId } = req.body;
+
+    switch (type) {
+      case 'card':
+        const deleteCardQuery = {
+          text: `DELETE FROM payment_cards WHERE id = $1`,
+          values: [id],
+        };
+        await pool.query(deleteCardQuery);
+        break;
+      case 'bank':
+        const deleted = await stripe.accounts.deleteExternalAccount(
+          stripeAccountId,
+          id
+        );
+        if (!deleted.deleted) {
+          res.status(400).json({ message: 'Failed to delete bank account', status: false });
+          return;
+        }
+        break;
+      default:
+        res.status(400).json({ message: 'Invalid payment method type', status: false });
+        return;
+    }
+
+    res.status(200).json({ message: 'Payment method deleted successfully', status: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+app.post('/fetch-payment-methods', async (req, res) => {
+  try {
+    const userId = req.body.id;
+    const stripeAccountId = req.body.stripeAccountId;
+
+    const paymentCardsQuery = {
+      text: `SELECT *, 'card' AS type FROM payment_cards WHERE user_id = $1 ORDER BY id DESC`,
+      values: [userId],
+    };
+
+    const paymentCardsResponse = await pool.query(paymentCardsQuery);
+
+    const externalAccounts = await stripe.accounts.listExternalAccounts(
+      stripeAccountId,
+      {
+        object: 'bank_account',
+      }
+    );
+
+    const maskCardNumber = (cardNumber) => {
+      return `****${cardNumber.slice(-4)}`;
+    };
+
+    const paymentMethods = {
+      paymentCards: paymentCardsResponse.rows.map((card) => ({
+        ...card,
+        card_number: maskCardNumber(card.card_number),
+      })),
+      connectedBankAccounts: externalAccounts.data.map((account) => ({
+        id: account.id,
+        account_holder_name: account.account_holder_name,
+        bank_name: account.bank_name,
+        last4: account.last4,
+        type: 'bank',
+      })),
+      status: true,
+    };
+
+    res.status(200).json(paymentMethods);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+app.post('/add-bank-account', async (req, res) => {
+  try {
+    
+    const { userId, country, currency, accountHolderName, accountHolderType, routingNumber, accountNumber } = req.body;
+
+    source_type = 'bank_account'
+
+      // Fetch user balance
+      let result = await pool.query(
+        'SELECT stripe_account_id FROM drivers WHERE id = $1',
+        [userId]
+      );
+  
+      // Check if user exists
+      customerIDStripe = result.rows[0]?.stripe_account_id 
+
+    const token = await stripe.tokens.create({
+      bank_account: {
+        country: country,
+        currency: currency,
+        account_holder_name: account_holder_name,
+        account_holder_type: account_holder_type,
+        routing_number: routing_number,
+        account_number: account_number,
+      },
+    });
+
+    const updatePayoutAccount = await stripe.accounts.createExternalAccount(
+  customerIDStripe,
+  {
+    external_account: token?.id,
+  }
+);
+
+    res.status(201).json({ message: 'Bank account added successfully', status: true });
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+app.post('/create-card-token', async (req, res) => {
+  try{
+
+    const {cardNumber, cardExpMonth, cardExpYear, cardCvc} = req.body
+    const token = await stripe.tokens.create({
+      card: {
+        number: cardNumber,
+        exp_month:cardExpMonth,
+        exp_year: cardExpYear,
+        cvc: cardCvc,
+      },
+    });
+
+  }catch(err){
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+
+  }
+})
+
+
+app.post('/transactions', async (req, res) => {
+  try {
+    const { id, type } = req.body;
+
+    // Check if user exists
+    let typeOfTransaction = ''
+    switch(type){
+      case 'in':
+        typeOfTransaction = 'Credit'
+        break
+      
+      case 'out':
+        typeOfTransaction = 'Debit'
+      break
+    }
+    const history = await pool.query(
+      'SELECT * FROM transactions WHERE user_id = $1 AND transaction_type = $2 ORDER BY id DESC',
+      [id, typeOfTransaction]
+    );
+
+    if (history.rows.length > 0) {
+      // Format transaction date
+      history.rows.forEach((transaction) => {
+        const date = new Date(transaction.transaction_date);
+        const day = date.getDate();
+        const month = date.toLocaleString('default', { month: 'long' });
+        const year = date.getFullYear();
+        const hours = date.getHours();
+        const minutes = date.getMinutes();
+        const ampm = hours >= 12 ? 'pm' : 'am';
+
+        transaction.transaction_date = `${day} ${month} ${year}, ${hours % 12 || 12}:${minutes.toString().padStart(2, '0')}${ampm}`;
+      });
+
+      return res.status(200).json({ data: history.rows, status: true });
+    } else {
+      return res.status(210).json({ message: 'No transactions yet', status: false });
+    }
+  } catch (err) {
+    return res.status(501).json({ status: false, message: 'Internal server error' });
+  }
+});
 
 
 app.post('/change-password', async (req, res) => {
@@ -1102,10 +2102,86 @@ app.post('/edit-destination', async (req, res) => {
 });
 
 
+app.post('/rebook-ride', async (req, res) => {
+  try {
+    const { bookingCode } = req.body;
+
+    // Check if booking code is provided
+    if (!bookingCode) {
+      return res.status(400).json({ message: 'Booking code is required', status: false });
+    }
+
+    // Get the booking data using the booking code
+    const getBookingQuery = {
+      text: `SELECT * FROM bookings
+             WHERE booking_code = $1`,
+      values: [bookingCode],
+    };
+
+    const bookingRes = await pool.query(getBookingQuery);
+
+    // Check if booking exists
+    if (bookingRes.rows.length === 0) {
+      return res.status(404).json({ message: 'Booking not found', status: false });
+    }
+
+    const bookingData = bookingRes.rows[0];
+
+    // Get the driver data
+    const getDriverQuery = {
+      text: `SELECT * FROM drivers
+             WHERE id = $1`,
+      values: [bookingData.driver_id],
+    };
+
+    const driverRes = await pool.query(getDriverQuery);
+
+    // Check if driver is available
+    if (driverRes.rows[0].active_status === '0') {
+      return res.status(400).json({ message: 'Oops! The driver is not available at the moment', status: false });
+    }
+
+    // Update the booking status and booktime
+    const currentTime = new Date();
+    const formattedDateTime = currentTime.toLocaleString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+
+    const updateBookingQuery = {
+      text: `UPDATE bookings
+             SET status = $1, booktime = $2
+             WHERE booking_code = $3`,
+      values: ['pending', formattedDateTime, bookingCode],
+    };
+
+    await pool.query(updateBookingQuery);
+
+    // Send email notification to driver
+    const driverEmail = driverRes.rows[0].email;
+
+    sendMailMessage(`You have a rebooked ride request at Pickup location: ${bookingData.place} - Destination: ${bookingData.destination_place} . Passenger is expecting you. Accept or Reject ride`, driverEmail, 'Rebooked Ride Request');
+
+    res.status(200).json({
+      message: `You have rebooked a past ride request at Pickup location: ${bookingData.place} - Destination: ${bookingData.destination_place} . Driver will be notified`,
+      status: true,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
 app.post('/book-ride', async(req, res) => {
   try {
     const { driver_id, passenger_id, from_latitude, from_longitude, destination_latitude, 
-      destination_longitude, book_amount, place, car_id, destination_place, stop_latitude, stop_longitude, stop_place, pickuptype } = req.body;
+      destination_longitude, book_amount, place, car_id, destination_place, 
+      stop_latitude, stop_longitude, stop_place, pickuptype, payment } = req.body;
 
     // Input validation
 
@@ -1116,6 +2192,22 @@ app.post('/book-ride', async(req, res) => {
     }
 
     console.log('book request:', req.body)
+
+       // Fetch user balance
+       if(payment != 'cash'){
+        let fetchBalance = await pool.query(
+          'SELECT account_balance FROM users WHERE id = $1',
+          [passenger_id]
+        );
+
+        const res = fetchBalance.rows[0]
+
+        if(book_amount . res?.account_balance ){
+          return res.status(400).json({ message: 'Your wallet balance is insufficient! Try using cash as payment method', status: false });
+
+        }
+       }
+     
 
     // Generate unique booking code
     let bookingCode;
@@ -1134,8 +2226,8 @@ app.post('/book-ride', async(req, res) => {
 
     if(stop_latitude && stop_longitude){
       console.log('values not null')
-      const insertRideStopsQuery = `INSERT INTO ride_stops (place, latitude, longitude, user_id, code) VALUES ($1, $2, $3, $4, $5)`;
-      await pool.query(insertRideStopsQuery, [stop_place, stop_latitude, stop_longitude, passenger_id, bookingCode]);
+      const insertRideStopsQuery = `INSERT INTO ride_stops (place, latitude, longitude, user_id, code, payment) VALUES ($1, $2, $3, $4, $5, $6)`;
+      await pool.query(insertRideStopsQuery, [stop_place, stop_latitude, stop_longitude, passenger_id, bookingCode, payment]);
   
   
     }
@@ -1156,11 +2248,13 @@ const formattedDateTime = currentTime.toLocaleString('en-US', {
 
 
 const hailed = 0
+
+const is_overlay = true
    // Insert booking into database
 const result = await pool.query(
-  `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime, stop_latitude, stop_longitude, pickuptype, hailed)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
-  [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, 'pending', bookingCode, driver_id, place, car_id, destination_place, formattedDateTime, stop_latitude, stop_longitude, pickuptype, hailed]
+  `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime, stop_latitude, stop_longitude, pickuptype, hailed, is_overlay)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *`,
+  [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, 'pending', bookingCode, driver_id, place, car_id, destination_place, formattedDateTime, stop_latitude, stop_longitude, pickuptype, hailed, is_overlay]
 );
 const getDriverQuery = {
   text: `SELECT * FROM drivers
@@ -1384,34 +2478,53 @@ let id = 0;
   }
 });
 
+
+
 app.post('/driver/fetch-balance', async (req, res) => {
   try {
     const { id } = req.body;
 
     console.log('fetch balance for id:',id)
+
+      // Fetch user balance
+      let result = await pool.query(
+        'SELECT stripe_account_id FROM drivers WHERE id = $1',
+        [id]
+      );
+  
+      // Check if user exists
+      customerIDStripe = result.rows[0]?.stripe_account_id 
+
+      console.log('customerIDStripe: ',customerIDStripe)
    
-
-    // Fetch user balance
-    let result = await pool.query(
-      'SELECT account_balance FROM drivers WHERE id = $1',
-      [id]
+    const balance = await stripe.balance.retrieve(
+      {
+        expand: ['instant_available.net_available'],
+      },
+      {
+        stripeAccount: customerIDStripe,
+      }
     );
+    console.log(balance)
 
-    // Check if user exists
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Wallet ID not found. Logout and login back your account.', status: false });
-    }
+    const availableStripeBalance = balance.available[0]?.amount
 
-    const balance = result.rows[0].account_balance;
+    console.log('availableStripeBalance: ',availableStripeBalance)
+
+    
+   // payDriver(100, customerIDStripe)
 
     res.status(200).json({
       message: 'User balance fetched successfully',
-      balance,
+      balance: availableStripeBalance? availableStripeBalance : 0,
+      withdrawalBalance: balance.instant_available[0]?.amount?  balance.instant_available[0]?.amount : 0,
       status: true,
     });
+
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Internal Server Error', status: false });
+    res.status(500).json({ message: 'Internal Server Error', status: true, balance: 0, withdrawalBalance: 0});
   }
 });
 
@@ -1903,6 +3016,130 @@ app.post('/reject-ride', async (req, res) => {
 
 
 
+app.post('/overlay-ride', async (req, res) => {
+  try {
+    const { id } = req.body;
+
+    // Input validation
+    if (!id) {
+      return res.status(400).json({ message: 'Ride ID is required', status: false });
+    }
+
+    // Update ride status to rejected
+    const overlay = false
+    const result = await pool.query(
+      `UPDATE bookings SET is_overlay = $1 WHERE booking_code = $2 RETURNING *`,
+      [overlay, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Ride not found', status: false });
+    }
+
+    res.status(200).json({
+      message: 'Ride overlay removed successfully',
+      ride: result.rows[0],
+      status: true
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+
+
+
+
+  app.post('/rider/cancel-ride', async (req, res) => {
+    try {
+      const { id, charge } = req.body;
+
+      const existingBooking = await pool.query(
+        `SELECT * FROM bookings WHERE booking_code = $1`,
+        [id]
+      );
+      if (existingBooking.rows.length > 0) {
+
+        const getDriverQuery = {
+          text: `SELECT * FROM drivers
+                 WHERE id = $1`,
+          values: [existingBooking.rows[0].driver_id],
+        };
+        
+        const driverRes = await pool.query(getDriverQuery);
+
+        const getRiderQuery = {
+          text: `SELECT * FROM users
+                 WHERE id = $1`,
+          values: [existingBooking.rows[0].passenger_id],
+        };
+        
+        const RiderRes = await pool.query(getRiderQuery);
+
+  
+      console.log('cancel ride request:', req.body)
+      const newBalance = Number(RiderRes.rows[0].account_balance) - Number(charge);
+  await pool.query(
+    'UPDATE users SET account_balance =  $1 WHERE id = $2',
+    [newBalance, existingBooking.rows[0].passenger_id]
+  );
+
+  let transactionId;
+  let isUnique = false;
+
+  while (!isUnique) {
+    transactionId = uuidv4();
+    const existingTransaction = await pool.query(
+      'SELECT * FROM transactions WHERE transaction_id = $1',
+      [transactionId]
+    );
+
+    if (existingTransaction.rows.length === 0) {
+      isUnique = true;
+    }
+  }
+
+  // Insert transaction
+  await pool.query(
+    'INSERT INTO transactions (user_id, description, amount, status, transaction_date, transaction_type, transaction_id, intent, intent_type, charges) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,$10)',
+    [
+      existingBooking.rows[0].passenger_id,
+      'Cancel Ride Fee',
+      charge,
+      'Successful',
+      new Date().toISOString(),
+      'Debit',
+      transactionId,
+      'cancel-ride-fee-payment',
+      transactionId,
+      '0%'
+    ]
+  );
+  
+  sendMailMessage(`Ride request at Pickup location: ${existingBooking.rows[0].place}, was cancelled by passenger.`,driverRes.rows[0].email, 'Ride Request Cancelled')
+        
+  
+        
+      }
+  
+      // Update booking status in database
+      const result = await pool.query(
+        `DELETE FROM bookings WHERE booking_code = $1`,
+        [id]
+      );
+  
+      res.status(200).json({
+        message: 'Booked ride has been cancelled. Driver will be notified and charge fee will be applied!',
+        booking: result.rows[0],
+        status: true
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Internal Server Error', status: false });
+    }
+  });
+
 app.post('/cancel-ride', async (req, res) => {
   try {
     const { id } = req.body;
@@ -1978,10 +3215,22 @@ app.post('/complete-ride', async (req, res) => {
   try {
     const { id } = req.body;
 
+    console.log('/complete ride:',req.body)
     // Input validation
     if (!id) {
       return res.status(400).json({ message: 'Ride ID is required', status: false });
     }
+
+      // Fetch driver and passenger names
+      const bookingInfo = await pool.query('SELECT * FROM bookings WHERE booking_code = $1', [id]);
+      const driver = await pool.query('SELECT * FROM drivers WHERE id = $1', [bookingInfo?.rows[0]?.driver_id]);
+      const passenger = await pool.query('SELECT * FROM users WHERE id = $1', [bookingInfo?.rows[0]?.passenger_id]);
+
+      if(passenger && driver){
+        await payDriver(bookingInfo?.rows[0]?.book_amount, driver?.rows[0]?.stripe_account_id, bookingInfo?.rows[0]?.passenger_id )
+
+      }
+
 
     // Update ride status to completed
     const result = await pool.query(
@@ -2054,29 +3303,29 @@ app.post('/recent-chats', async (req, res) => {
 
     // Query to fetch recent chats
     const recentChatsQuery = `
-      SELECT 
-        c.id,
-        c.message,
-        c.time_sent,
-        c.driver_id,
-        c.passenger_id
-      FROM 
-        chats c
-      WHERE 
-        (c.driver_id = $1 OR c.passenger_id = $1)
-        AND 
-        c.id IN (
-          SELECT 
-            MAX(id) 
-          FROM 
-            chats 
-          GROUP BY 
-            driver_id, 
-            passenger_id 
-        )
-      ORDER BY 
-        c.time_sent DESC;
-    `;
+    SELECT 
+      c.id,
+      c.message,
+      c.time_sent,
+      c.driver_id,
+      c.passenger_id
+    FROM 
+      chats c
+    WHERE 
+      (c.driver_id = $1 OR c.passenger_id = $1)
+      AND 
+      c.id IN (
+        SELECT 
+          MAX(id) 
+        FROM 
+          chats 
+        GROUP BY 
+          LEAST(driver_id, passenger_id), 
+          GREATEST(driver_id, passenger_id)
+      )
+    ORDER BY 
+      c.time_sent DESC;
+  `;
 
     const result = await pool.query(recentChatsQuery, [id]);
 
@@ -2096,9 +3345,10 @@ app.post('/recent-chats', async (req, res) => {
       }
 
       // Fetch driver and passenger names
-      const driver = await pool.query('SELECT * FROM drivers WHERE id = $1', [chat.driver_id]);
-      const passenger = await pool.query('SELECT * FROM users WHERE id = $1', [chat.passenger_id]);
-
+      const driver = await pool.query('SELECT * FROM drivers WHERE id = $1 OR id = $2', [chat.driver_id, chat.passenger_id]);
+      const passenger = await pool.query('SELECT * FROM users WHERE id = $1 OR id = $2', [chat.driver_id, chat.passenger_id]);
+      console.log('chat.driver_id: ',chat.driver_id)
+      console.log('chat.passenger_id: ',chat.passenger_id)
       return {
         ...chat,
         time_sent: timeAgo,
@@ -2106,6 +3356,8 @@ app.post('/recent-chats', async (req, res) => {
         passenger: passenger.rows[0],
       };
     }));
+
+    console.log('recentChats: ',recentChats)
 
     res.status(200).json({
       message: 'Recent chats fetched successfully',
@@ -2298,7 +3550,7 @@ app.post('/verify-email', async (req, res) => {
   try {
     const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
 
-    sendMail(otpCode, email, 'Yasser - OTP Code');
+    sendMail(otpCode, email, 'Email Authentication Code');
 
 
     // Insert OTP into otp table
@@ -2574,6 +3826,118 @@ app.post('/driver/login', async (req, res) => {
 
 
 // Helper functions
+
+async function payDriver(amount, customerIDStripe, passengerID){
+  
+  console.log('pay driver with customerIDStripe: ',customerIDStripe)
+  console.log('pay driver with amount: ',amount)
+  console.log('pay driver with passengerID: ',passengerID)
+
+  const transfer = await stripe.transfers.create({
+    amount: amount,
+    currency: 'usd',
+    destination: customerIDStripe,
+  });
+
+
+  let transactionId;
+  let isUnique = false;
+
+  while (!isUnique) {
+    transactionId = uuidv4();
+    const existingTransaction = await pool.query(
+      'SELECT * FROM transactions WHERE transaction_id = $1',
+      [transactionId]
+    );
+
+    if (existingTransaction.rows.length === 0) {
+      isUnique = true;
+    }
+  }
+
+
+  const getUserData = await pool.query('SELECT * FROM users WHERE id = $1', [passengerID]);
+
+  // Send deposit notification email
+  // Update account balance
+  const newBalance = Number(getUserData.rows[0].account_balance) - Number(amount);
+  await pool.query(
+    'UPDATE users SET account_balance =  $1 WHERE id = $2',
+    [newBalance, passengerID]
+  );
+
+  // Insert transaction
+  await pool.query(
+    'INSERT INTO transactions (user_id, description, amount, status, transaction_date, transaction_type, transaction_id, intent, intent_type, charges) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,$10)',
+    [
+      passengerID,
+      'Ride Fare Payment',
+      amount,
+      'Successful',
+      new Date().toISOString(),
+      'Debit',
+      transactionId,
+      'intenal-payment',
+      transfer?.id,
+      '0%'
+    ]
+  );
+
+  
+  console.log('transfer: ',transfer)
+
+    // Fetch user balance
+    let result = await pool.query(
+      'SELECT * FROM drivers WHERE stripe_account_id = $1',
+      [customerIDStripe]
+    );
+    // Check if user exists
+    const userId = result.rows[0]?.id 
+    const getUserPreviousBalance =  result.rows[0]
+    const email =  result.rows[0].email
+
+    console.log('customerIDStripe: ',customerIDStripe)
+
+      // Generate a unique transaction ID
+       transactionId;
+       isUnique = false;
+
+      while (!isUnique) {
+        transactionId = uuidv4();
+        const existingTransaction = await pool.query(
+          'SELECT * FROM transactions WHERE transaction_id = $1',
+          [transactionId]
+        );
+
+        if (existingTransaction.rows.length === 0) {
+          isUnique = true;
+        }
+      }
+
+      // Get user's previous balance
+      // Send deposit notification email
+      sendMailMessage('Transaction Notification, '+getUserPreviousBalance.name +', you have received a payment of $'+amount+', for your just concluded ride pickup!', email, 'Ride Fare Paid')
+
+    
+      // Insert transaction
+      await pool.query(
+        'INSERT INTO transactions (user_id, description, amount, status, transaction_date, transaction_type, transaction_id, intent,intent_type, charges) VALUES ($1, $2, $3, $4, $5, $6, $7, $8,$9, $10)',
+        [
+          userId,
+          transfer?.type == 'bank_account'? 'Ride payment pending' :'Ride payment',
+          amount,
+          'Successful',
+          new Date().toISOString(),
+          'Credit',
+          transactionId,
+          transfer?.id,
+          'internal-payout',
+          '0%'
+        ]
+      );
+
+}
+
 async function getUserByEmail(email) {
   try {
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
