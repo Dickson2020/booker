@@ -10,10 +10,6 @@ const secretStripeKey = 'sk_test_51QFKpS2M46jo8aemybvKvZ24vwGOfCY6eQjVVXhMS2f7vD
 const stripePublishableApiKey = 'pk_test_51QFKpS2M46jo8aemG6WQf3dh6kapHTGikUEeXAwnxt1zDlxAKsk5p5n6r2FsHgcCfPRkBTWo5eaqKpGeuyAQS1jE00dX85hNsc'
 const stripe = require('stripe')(secretStripeKey);
 
-
-
-/*
-
 const pool = new Pool({
   user: 'postgres',
   host: 'localhost',
@@ -26,12 +22,15 @@ const pool = new Pool({
 
 
 
+/*
 
-*/
 
 const pool = new Pool({
   connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
 })
+
+*/
+
 
 
 
@@ -330,9 +329,8 @@ app.get('/onboard-stripe', (req, res) => {
       </style>
     </head>
     <body>
-      <h1>Stripe Connected!</h1>
-      <p>Please close this page and go back to the app.</p>
-      <button class="button" onclick="window.close()">Close Page</button>
+      <h1>Setup completed!</h1>
+      <p>You wallet has been successfully setup. Kindly wait for some minutes for connection to establish in app and start driving. Please close this page and go back to the app.</p>
     </body>
     </html>
   `);
@@ -1311,7 +1309,7 @@ app.post('/driver/register', async (req, res) => {
       // Handle the error, e.g., rollback the user creation
     }
 
-    const active_status = false
+    const active_status = 0
 
     const newUser = await pool.query(
       'INSERT INTO drivers (name, phone, country, account_balance, email, password, latitude, longitude, verified, active_status, rating, customers, years_of_experience) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, 0, 0) RETURNING *',
