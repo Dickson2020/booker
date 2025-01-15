@@ -11,13 +11,8 @@ const stripePublishableApiKey = 'pk_test_51QFKpS2M46jo8aemG6WQf3dh6kapHTGikUEeXA
 const stripe = require('stripe')(secretStripeKey);
 
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'db',
-  password: 'developer@100',
-  port: 5432
-});
-
+  connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
+})
 
 
 
@@ -26,8 +21,14 @@ const pool = new Pool({
 
 
 const pool = new Pool({
-  connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
-})
+  user: 'postgres',
+  host: 'localhost',
+  database: 'db',
+  password: 'developer@100',
+  port: 5432
+});
+
+
 
 */
 
@@ -45,7 +46,6 @@ app.use(express.json()); // Parse JSON bodies
 app.use(express.urlencoded({ extended: true }));
 
 // This example sets up an endpoint using the Express framework.
-// Watch this video to get started: https://youtu.be/rPR2aJ6XnAc.
 app.post('/webhook', express.json({type: 'application/json'}), async (request, response) => {
   try {
     const event = request.body;
@@ -63,7 +63,7 @@ try{
     paymentIntent?.id,
     {
       payment_method: paymentIntent?.payment_method,
-      return_url: 'https://www.google.com',
+      return_url: 'https://yessat.com',
     }
   );
   console.log('paymentIntentVerification:',paymentIntentVerification)
@@ -1311,9 +1311,11 @@ app.post('/driver/register', async (req, res) => {
 
     const active_status = 0
 
+    const rides_preference = 'auto'
+
     const newUser = await pool.query(
-      'INSERT INTO drivers (name, phone, country, account_balance, email, password, latitude, longitude, verified, active_status, rating, customers, years_of_experience) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, 0, 0) RETURNING *',
-      [name, phone, country, account_balance, email, hashedPassword, latitude, longitude, verified, active_status]
+      'INSERT INTO drivers (name, phone, country, account_balance, email, password, latitude, longitude, verified, active_status, rating, customers, years_of_experience, rides_preference) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, 0, 0, $11) RETURNING *',
+      [name, phone, country, account_balance, email, hashedPassword, latitude, longitude, verified, active_status, rides_preference]
     );
 
 
