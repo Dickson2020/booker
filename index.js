@@ -10,10 +10,10 @@ const secretStripeKey = 'sk_test_51QFKpS2M46jo8aemybvKvZ24vwGOfCY6eQjVVXhMS2f7vD
 const stripePublishableApiKey = 'pk_test_51QFKpS2M46jo8aemG6WQf3dh6kapHTGikUEeXAwnxt1zDlxAKsk5p5n6r2FsHgcCfPRkBTWo5eaqKpGeuyAQS1jE00dX85hNsc'
 const stripe = require('stripe')(secretStripeKey);
 
+
 const pool = new Pool({
   connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
 })
-
 
 
 
@@ -1956,7 +1956,7 @@ app.post('/fetch-drivers', async (req, res) => {
           cars: flatUpdatedCars,
           rideOptionsLength: flatUpdatedCars.length,
           eta: `${eta}`,
-          fare: `${actualVal}`,
+          fare: `${parseFloat(actualVal).toFixed(2)}`,
           fareCent: cent,
           reviews: resolvedReviewsData,
         });
@@ -2226,8 +2226,8 @@ app.post('/book-ride', async(req, res) => {
 
     if(stop_latitude && stop_longitude){
       console.log('values not null')
-      const insertRideStopsQuery = `INSERT INTO ride_stops (place, latitude, longitude, user_id, code, payment) VALUES ($1, $2, $3, $4, $5, $6)`;
-      await pool.query(insertRideStopsQuery, [stop_place, stop_latitude, stop_longitude, passenger_id, bookingCode, payment]);
+      const insertRideStopsQuery = `INSERT INTO ride_stops (place, latitude, longitude, user_id, code) VALUES ($1, $2, $3, $4, $5)`;
+      await pool.query(insertRideStopsQuery, [stop_place, stop_latitude, stop_longitude, passenger_id, bookingCode]);
   
   
     }
@@ -2252,9 +2252,9 @@ const hailed = 0
 const is_overlay = true
    // Insert booking into database
 const result = await pool.query(
-  `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime, stop_latitude, stop_longitude, pickuptype, hailed, is_overlay)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *`,
-  [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, 'pending', bookingCode, driver_id, place, car_id, destination_place, formattedDateTime, stop_latitude, stop_longitude, pickuptype, hailed, is_overlay]
+  `INSERT INTO bookings (passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, status, booking_code, driver_id, place, car_id, destination_place, booktime, stop_latitude, stop_longitude, pickuptype, hailed, is_overlay, payment)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
+  [passenger_id, from_latitude, from_longitude, destination_latitude, destination_longitude, book_amount, 'pending', bookingCode, driver_id, place, car_id, destination_place, formattedDateTime, stop_latitude, stop_longitude, pickuptype, hailed, is_overlay, payment]
 );
 const getDriverQuery = {
   text: `SELECT * FROM drivers
@@ -2279,6 +2279,7 @@ sendMailMessage(`You have a ride request at Pickup location: ${place} - Destinat
     res.status(500).json({ message: 'Internal Server Error', status: false });
   }
 });
+
 
 
 
@@ -2776,6 +2777,8 @@ app.post('/vehicles/get-vehicles', async (req, res) => {
   }
 });
 
+const apiEndpoint = 'https://auto.dev/api/vin/';
+const apiKey = 'ZrQEPSkKYW5vaWJpZGlja3NvbkBnbWFpbC5jb20='; // Replace with your actual API key
 
 app.post('/vehicle/register', async (req, res) => {
   console.log('register vehicle body data', req.body)
@@ -2783,9 +2786,7 @@ app.post('/vehicle/register', async (req, res) => {
   try {
     const {
       driver_id,
-      car_model,
       car_color,
-      car_name,
       seats,
       car_number,
       phone,
@@ -2795,10 +2796,34 @@ app.post('/vehicle/register', async (req, res) => {
     } = req.body;
 
     // Validate input data
-    if (!driver_id || !car_model || !car_color || !car_name || !seats || !car_number || !phone ) {
+    if (!driver_id  || !car_color || !seats || !car_number || !phone ) {
       return res.status(400).json({ message: 'Missing required fields', status: false });
     }
 
+  const url = `${apiEndpoint}${car_number}?apikey=${apiKey}`;
+
+  const verificationResponse = await fetch(url);
+  const dataVin = await verificationResponse.json();
+
+  console.log('dataVin:',dataVin)
+
+  if(dataVin?.status == 'NOT_FOUND'){
+    return res.status(500).json({ message: dataVin?.message,status: false });
+
+  }
+
+  if(dataVin?.status == 'BAD_REQUEST'){
+    return res.status(500).json({ message: dataVin?.message,status: false });
+
+  }
+
+  let car_model = ''
+  let car_name = ''
+
+  if(dataVin?.make){
+    car_model = dataVin?.model?.name
+    car_name = dataVin?.make?.name
+  }
     
     // Insert data into uploaded_cars table
     const query = {
@@ -2871,7 +2896,7 @@ if (result) {
     const vehiclesRes = await pool.query(getVehiclesQuery);
 
     // Return success response
-    res.json({ message: 'Vehicle has been registered and can now be used for pickup services', data: vehiclesRes.rows, status: true });
+    res.json({ message: car_name.toUpperCase() + ' with VIN: '+car_number+', has been registered', data: vehiclesRes.rows, status: true });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Failed to register vehicle', status: false });
@@ -3341,7 +3366,12 @@ app.post('/recent-chats', async (req, res) => {
       } else if (timeDiff < 3600) {
         timeAgo = `${Math.floor(timeDiff / 60)}mins ago`;
       } else {
-        timeAgo = `${Math.floor(timeDiff / 3600)}hr ago`;
+        if(Math.floor(timeDiff / 3600) > 24){
+          timeAgo = chat.time_sent
+        }else{
+          timeAgo = `${Math.floor(timeDiff / 3600)}hr ago`;
+
+        }
       }
 
       // Fetch driver and passenger names
