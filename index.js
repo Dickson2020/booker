@@ -41,17 +41,26 @@ async function getApiKeys() {
   }
 }
 
-let secretStripeKey = null
+let secretStripeKey = ''
 
-let stripePublishableApiKey = null
+let stripePublishableApiKey = ''
 const stripeModule = require('stripe');
-const stripe = null
+let stripe = null
+
 async function initializeStripe() {
   let apiKeys = await getApiKeys();
-   secretStripeKey = apiKeys.stripe_secret_key;
-   stripePublishableApiKey = apiKeys.stripe_publishable_api_key;
+  let fetchedSecretKey = apiKeys.stripe_secret_key;
+  stripePublishableApiKey = apiKeys.stripe_publishable_api_key;
+  if (fetchedSecretKey !== secretStripeKey) {
+    console.error('Mismatched secret keys!');
+    console.log('Fetched secret key:', fetchedSecretKey);
+    console.log('Hardcoded secret key:', secretStripeKey);
+  } else {
+    console.log('Secret keys match.');
+  }
+  stripe = stripeModule(fetchedSecretKey);
 
-  const stripe = stripeModule(secretStripeKey);
+  console.log('stripe initialized', apiKeys)
   // Now you can use the stripeInstance
 }
 
@@ -481,7 +490,10 @@ app.post('/connect-wallet', async (req, res) => {
   // Use an existing Customer ID if this is a returning customer.
   const {customerId, url} = req.body
 
-  console.log('connect wallet: ', req.body)
+//  console.log('connect wallet: ', req.body)
+
+  console.log('api keys:',{secret: secretStripeKey,publishableKey:stripePublishableApiKey})
+
 
   if(stripe == null){
     await initializeStripe()
@@ -502,6 +514,7 @@ app.post('/connect-wallet', async (req, res) => {
   let customerAccountId = customerIdResponse?.stripe_account_id
 if (customerIdResponse?.stripe_account_id === null) {
  console.log('customer CONNECT ID does not exists')
+
 const account = await stripe.accounts.create({
   country: 'US',
   email: customerIdResponse.email,
@@ -537,7 +550,7 @@ const query = {
 // Execute query
  await pool.query(query);
 
- console.log(account)
+ //console.log(account)
 
       const accountLink = await stripe.accountLinks.create({
         account: account.id,
@@ -546,7 +559,7 @@ const query = {
         type: 'account_onboarding',
       }); 
 
-      console.log(accountLink)  
+      //console.log(accountLink)  
       
        res.status(200).json({ message: 'Please you need to connect driver app to Stripe to start  collecting payout!', onboard: true, accountLink });
 
@@ -557,7 +570,7 @@ const query = {
 
     const account = await stripe.accounts.retrieve(customerAccountId);
 
-    console.log('retrieve account data', account)
+    //console.log('retrieve account data', account)
 
     if(account?.charges_enabled){
       res.status(200).json({ message: 'Account connected! Proceed', onboard: false , id: customerAccountId});
@@ -569,7 +582,7 @@ const query = {
         type: 'account_onboarding',
       }); 
 
-      console.log(accountLink)  
+      //console.log(accountLink)  
       
        res.status(200).json({ message: 'Please you need to connect driver app to Stripe to start  collecting payout!', onboard: true, accountLink });
 
@@ -582,7 +595,7 @@ const query = {
       type: 'account_onboarding',
     }); 
 
-    console.log(accountLink)  
+   // console.log(accountLink)  
     
      res.status(200).json({ message: 'Please you need to connect driver app to Stripe to start  collecting payout!', onboard: true, accountLink });
 
