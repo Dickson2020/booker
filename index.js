@@ -34,6 +34,7 @@ console.log('pool',pool)
 async function getApiKeys() {
   try {
       const result = await pool.query('SELECT stripe_secret_key, stripe_publishable_api_key FROM settings WHERE id = 1');
+      console.log('result.rows[0]:',result.rows[0])
       return result.rows[0];
   } catch (err) {
       throw err;
@@ -54,7 +55,6 @@ async function initializeStripe() {
   // Now you can use the stripeInstance
 }
 
-initializeStripe();
 
 
 
@@ -1167,61 +1167,67 @@ app.post('/admin/add-new-staff', (req, res) => {
 
   // Hash the password
   bcrypt.hash(staffData.password, 10, (err, hashedPassword) => {
+    if (err) {
+      console.error('error hashing password:', err);
+      res.status(500).send({ message: 'Error hashing password', status: false });
+      return;
+    }
+
+    pool.query('SELECT * FROM administration WHERE email = $1', [staffData.email], (err, result) => {
       if (err) {
-          console.error('error hashing password:', err);
-          res.status(500).send({ message: 'Error hashing password', status: false  });
-          return;
+        console.error('error checking email:', err);
+        res.status(500).send({ message: 'Error checking email', status: false });
+        return;
       }
 
-      pool.query('SELECT * FROM administration WHERE email = $1', [staffData.email], (err, result) => {
-        if (result.rows.length > 0) {
-            // User exists
-            res.status(400).send({ message: 'User with this email already exists', status: false });
-            return;
-        }
-        // User does not exist, proceed with registration
-    });
+      if (result.rows.length > 0) {
+        // User exists
+        res.status(400).send({ message: 'User with this email already exists', status: false });
+        return;
+      }
 
       // Insert the staff data into the database
       pool.query('INSERT INTO administration (email, password, address, phone, role, name) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-          [staffData.email, hashedPassword, staffData.country, staffData.phone, staffData.role, staffData.firstName + ' ' + staffData.lastName],
-          (err, result) => {
-              if (err) {
-                  console.error('error inserting staff data:', err);
-                  res.status(500).send({ message: 'Error inserting staff data', status: false });
-                  return;
-              }
-              var message = `
-             
-                      <h4>Congratulations!</h4>
-                      <p>Hello, ${staffData.firstName}</p>
-                      <p>We are thrilled to inform you that you have been assigned a new job role at YESATT!</p>
-                      <p>Your new role is: <strong>${staffData?.role.toUpperCase()}</strong></p>
-                      <p>We believe your skills and experience make you an ideal fit for this position, and we are excited to have you on board! 🚀</p>
-                      <p>To get started, please find your login details below:</p>
-                      <table border="0" cellpadding="0" cellspacing="0">
-                       <tr>
-                              <td><strong>Admin login:</strong></td>
-                              <td>https://yesatt.com/admin</td>
-                          </tr>
-                          <tr>
-                              <td><strong>Email:</strong></td>
-                              <td>${staffData?.email}</td>
-                          </tr>
-                          <tr>
-                              <td><strong>Password:</strong></td>
-                              <td>Please use the temporary password: <strong>${staffData?.password}</strong> (You can change this password in your dashboard)</td>
-                          </tr>
-                      </table>
-                      <p>If you have any questions or concerns, please don't hesitate to reach out to us.</p>
-                      <p>Welcome to the YESATT team!</p>
-                      <p>Best regards,</p>
-                      <p>The YESATT Team</p>
-                   `;
-              sendMailMessage(message,staffData?.email,'New Job Role Alert')
-              res.send({ message: 'Staff member added successfully', data: result.rows[0], status: true  });
+        [staffData.email, hashedPassword, staffData.country, staffData.phone, staffData.role, staffData.firstName + ' ' + staffData.lastName],
+        (err, result) => {
+          if (err) {
+            console.error('error inserting staff data:', err);
+            res.status(500).send({ message: 'Error inserting staff data', status: false });
+            return;
           }
+
+          var message = `
+            <h4>Congratulations!</h4>
+            <p>Hello, ${staffData.firstName}</p>
+            <p>We are thrilled to inform you that you have been assigned a new job role at YESATT!</p>
+            <p>Your new role is: <strong>${staffData?.role.toUpperCase()}</strong></p>
+            <p>We believe your skills and experience make you an ideal fit for this position, and we are excited to have you on board! </p>
+            <p>To get started, please find your login details below:</p>
+            <table border="0" cellpadding="0" cellspacing="0">
+              <tr>
+                <td><strong>Admin login:</strong></td>
+                <td>https://yesatt.com/admin</td>
+              </tr>
+              <tr>
+                <td><strong>Email:</strong></td>
+                <td>${staffData?.email}</td>
+              </tr>
+              <tr>
+                <td><strong>Password:</strong></td>
+                <td>Please use the temporary password: <strong>${staffData?.password}</strong> (You can change this password in your dashboard)</td>
+              </tr>
+            </table>
+            <p>If you have any questions or concerns, please don't hesitate to reach out to us.</p>
+            <p>Welcome to the YESATT team!</p>
+            <p>Best regards,</p>
+            <p>The YESATT Team</p>
+          `;
+
+          sendMailMessage(message, staffData?.email, 'New Job Role Alert')
+          res.status(200).send({ message: 'Staff member added successfully', data: result.rows[0], status: true });
+        }
       );
+    });
   });
 });
 
