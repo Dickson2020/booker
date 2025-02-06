@@ -1752,7 +1752,7 @@ app.post('/driver/register', async (req, res) => {
     try {
       const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
 
-     await sendMail(otpCode, email,'Email Authentication Code');
+      await sendMailMessage('OTP CODE: '+otpCode, email,'OTP Verification');
 
 
       // Insert OTP into otp table
@@ -1920,7 +1920,7 @@ app.post('/register', async (req, res) => {
 
     try {
       const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
-     await sendMail(otpCode, email);
+     await sendMailMessage('OTP CODE: '+otpCode, email,'OTP Verification');
 
       // Insert OTP into otp table
       await pool.query(
