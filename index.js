@@ -7,15 +7,8 @@ const port = process.env.PORT || 9000; //for production use 3000
 const crypto = require('crypto');
 
 
-const pool = new Pool({
-  connectionString: "postgres://default:60tfIjAVpXql@ep-white-dream-a44cw6ox-pooler.us-east-1.aws.neon.tech:5432/verceldb?sslmode=require"
-})
-
 
 /*
-
-
-
 const pool = new Pool({
   user: 'postgres',
   host: 'localhost',
@@ -27,7 +20,15 @@ const pool = new Pool({
 
 */
 
+const pool = new Pool({
+  user: 'kudipoi3_pgdev',
+  host: '131.153.147.42',
+  database: 'kudipoi3_pg',
+  password: 'developer@2024',
+  port: 5432
+});
 
+console.log('pool',pool)
 
 
 async function getApiKeys() {
