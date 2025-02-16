@@ -51,13 +51,7 @@ async function initializeStripe() {
   let apiKeys = await getApiKeys();
   let fetchedSecretKey = apiKeys.stripe_secret_key;
   stripePublishableApiKey = apiKeys.stripe_publishable_api_key;
-  if (fetchedSecretKey !== secretStripeKey) {
-    console.error('Mismatched secret keys!');
-    console.log('Fetched secret key:', fetchedSecretKey);
-    console.log('Hardcoded secret key:', secretStripeKey);
-  } else {
-    console.log('Secret keys match.');
-  }
+ 
   stripe = stripeModule(fetchedSecretKey);
 
   console.log('stripe initialized', apiKeys)
@@ -1424,7 +1418,7 @@ app.get('/stripe-api-key', async (req, res) => {
     const apikey = '';
     const getKey = await getApiKeys()
     
-    res.status(200).json({ apikey: getKey.stripe_secret_key, secretStripeKey: getKey.stripe_publishable_api_key , status: true });
+    res.status(200).json({ apikey: getKey.stripe_publishable_api_key , secretStripeKey: getKey.stripe_secret_key , status: true });
   } catch (error) {
     // Handle internal server error
     res.status(500).json({ message: 'Internal Server Error', status: false });
