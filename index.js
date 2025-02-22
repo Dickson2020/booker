@@ -2274,6 +2274,26 @@ app.post('/submit-review', async (req, res) => {
 });
 
 
+
+// Function to calculate distance between two coordinates (Haversine Formula)
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Radius of Earth in km
+  const toRad = (angle) => (Math.PI / 180) * angle;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in km
+}
+
 app.post('/fetch-drivers', async (req, res) => {
   try {
     const {
@@ -2284,172 +2304,157 @@ app.post('/fetch-drivers', async (req, res) => {
       radius = 10,
     } = req.body;
 
-    console.log('request body', req.body);
+    console.log('Request body:', req.body);
 
     if (!pickupLatitude || !pickupLongitude || !destinationLatitude || !destinationLongitude) {
       return res.status(400).json({
         message: 'Pickup and destination coordinates are required',
         status: false,
-        drivers: []
+        drivers: [],
       });
     }
+    const activeDriversQuery = `
+    SELECT * FROM drivers 
+    WHERE active_status = '1'
+  `;
+  
 
-    const activeDrivers = await pool.query(
-      `SELECT *,
-        (6371 * acos(sin($1 * PI() / 180) * sin(latitude::double precision * PI() / 180) +
-        cos($1 * PI() / 180) * cos(latitude::double precision * PI() / 180) *
-        cos(($2 * PI() / 180) - (longitude::double precision * PI() / 180)))) AS distance
-      FROM drivers
-      WHERE active_status = $3
-      AND latitude IS NOT NULL
-      AND longitude IS NOT NULL
-      AND latitude != ''
-      AND longitude != ''
-      ORDER BY id DESC`,
-      [pickupLatitude, pickupLongitude, 1]
-    );
+    const { rows: drivers } = await pool.query(activeDriversQuery);
 
-    if (activeDrivers.rows.length === 0) {
+    if (drivers.length === 0) {
       return res.status(404).json({
         message: 'No active drivers found within the specified radius',
         status: false,
-        drivers: []
+        drivers: [],
       });
     }
 
-    const drivers = [];
-    for (const driver of activeDrivers.rows) {
-      const cars = await pool.query(
-        'SELECT * FROM uploaded_cars WHERE driver_id = $1',
-        [driver.id]
-      );
+    // Calculate distances in JavaScript (faster and avoids SQL issues)
+    const processedDrivers = drivers
+      .map((driver) => ({
+        ...driver,
+        distance: calculateDistance(
+          pickupLatitude,
+          pickupLongitude,
+          parseFloat(driver.latitude),
+          parseFloat(driver.longitude)
+        ),
+      }))
+      .filter((driver) => driver.distance <= radius) // Filter out drivers beyond radius
+      .sort((a, b) => a.distance - b.distance); // Sort by distance
 
-      const reviews = await pool.query(
-        `SELECT dr.*,
-          CASE 
-            WHEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime)) < 60 
-              THEN ROUND(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime))) || 's ago'
-            WHEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime)) < 3600 
-              THEN ROUND(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime)) / 60) || 'm ago'
-            WHEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime)) < 86400 
-              THEN ROUND(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime)) / 3600) || 'h ago'
-            ELSE TO_CHAR(dr.datetime, 'YYYY-MM-DD HH24:MI')
-          END AS time_ago
-        FROM driver_reviews dr
-        WHERE dr.driver_id = $1
-        ORDER BY dr.id`,
-        [driver.id]
-      );
+    // Limit to max 20, but shuffle if more than 10
+    let finalDrivers = processedDrivers.slice(0, 20);
+    if (finalDrivers.length > 10) {
+      finalDrivers = finalDrivers.sort(() => Math.random() - 0.5).slice(0, 10);
+    }
 
-      const resolvedReviewsData = reviews.rows;
+    // Fetch cars and reviews for each driver
+    const driversWithDetails = await Promise.all(
+      finalDrivers.map(async (driver) => {
+        const { rows: cars } = await pool.query(
+          'SELECT * FROM uploaded_cars WHERE driver_id = $1',
+          [driver.id]
+        );
 
-      const pickupDistance = driver.distance;
-      const destinationDistance = calculateDistance(
-        parseFloat(driver.latitude),
-        parseFloat(driver.longitude),
-        parseFloat(destinationLatitude),
-        parseFloat(destinationLongitude)
-      );
+        const { rows: reviews } = await pool.query(
+          `SELECT dr.*, 
+            CASE 
+              WHEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime)) < 60 
+                THEN ROUND(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime))) || 's ago'
+              WHEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime)) < 3600 
+                THEN ROUND(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime)) / 60) || 'm ago'
+              WHEN EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime)) < 86400 
+                THEN ROUND(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - dr.datetime)) / 3600) || 'h ago'
+              ELSE TO_CHAR(dr.datetime, 'YYYY-MM-DD HH24:MI')
+            END AS time_ago
+          FROM driver_reviews dr
+          WHERE dr.driver_id = $1
+          ORDER BY dr.id`,
+          [driver.id]
+        );
 
-      const totalDistance = pickupDistance + destinationDistance;
-      const speed = 40 / 60; // km per minute
-      const baseFare = 0.12; // in dollars
-      const perKilometerFare = 1.03; // in dollars
+        const destinationDistance = calculateDistance(
+          parseFloat(driver.latitude),
+          parseFloat(driver.longitude),
+          parseFloat(destinationLatitude),
+          parseFloat(destinationLongitude)
+        );
 
-      // Introduce dynamic pricing
-      let fareMultiplier = 1;
+        const totalDistance = driver.distance + destinationDistance;
+        const speed = 40 / 60; // km per minute
+        const baseFare = 0.12;
+        const perKilometerFare = 1.03;
+        let fareMultiplier = 1;
+        const totalFare = (baseFare + totalDistance * perKilometerFare * fareMultiplier).toFixed(2);
 
-      const totalFare = new Intl.NumberFormat().format(baseFare + totalDistance * perKilometerFare * fareMultiplier);
+        const etaInMinutes = Math.floor(totalDistance / speed);
+        const eta =
+          etaInMinutes < 60
+            ? `${etaInMinutes} mins`
+            : `${Math.floor(etaInMinutes / 60)}h ${etaInMinutes % 60}mins`;
 
-      const etaInMinutes = Math.floor(totalDistance / speed);
-      let eta;
-      if (etaInMinutes < 60) {
-        eta = `${etaInMinutes} mins`;
-      } else {
-        const hours = Math.floor(etaInMinutes / 60);
-        const remainingMinutes = etaInMinutes % 60;
-        eta = `${hours}h ${remainingMinutes}mins`;
-      }
+        let cent = '';
+        let actualVal = '';
+        if (totalFare.includes('.')) {
+          [actualVal, cent] = totalFare.split('.');
+        } else {
+          actualVal = totalFare;
+          cent = '00';
+        }
 
-      let cent = '';
-      let actualVal = '';
-      if (totalFare.includes('.')) {
-        cent = totalFare.split('.')[1];
-        actualVal = totalFare.split('.')[0];
-      } else {
-        cent = '00';
-        actualVal = totalFare;
-      }
+        // Fetch ride options
+        const updatedCars = await Promise.all(
+          cars.map(async (car) => {
+            const { rows: rideOptions } = await pool.query(
+              'SELECT * FROM ride_options WHERE ride_id = $1',
+              [car.id]
+            );
 
-      let rideLength = []
+            return rideOptions.map((rideOption) => {
+              const updatedCar = { ...car, id: rideOption.id, pickuptype: rideOption.ride_option };
 
-      if (cars.rows.length > 0) {
-        const promises = cars.rows.map(async (car) => {
-          const fetchRideOptions = await pool.query(
-            'SELECT * FROM ride_options WHERE ride_id = $1',
-            [car.id]
-          );
-      
-          const rideOptions = fetchRideOptions.rows;
-      
-          const updatedCars = rideOptions.map((rideOption) => {
-            const updatedCar = { ...car };
-                  updatedCar.id = rideOption.id; // Use ride option id as car id
+              if (rideOption.ride_option === 'priority') {
+                updatedCar.eta = Math.max(etaInMinutes - 1, 0);
+                updatedCar.fare = (parseFloat(totalFare) - 0.5).toFixed(2);
+              } else {
+                updatedCar.eta = etaInMinutes;
+                updatedCar.fare = totalFare;
+              }
 
-            updatedCar.pickuptype = rideOption.ride_option;
+              return updatedCar;
+            });
+          })
+        );
 
-  // Adjust ETA and fare for priority rides
-  if (rideOption.ride_option === 'priority') {
-    const etaInMinutesx = Math.floor(etaInMinutes);
-    updatedCar.eta = Math.max(etaInMinutesx - 1, 0);
-    updatedCar.fare = (parseFloat(totalFare) - 0.5).toFixed(2);
-  } else {
-    updatedCar.eta = etaInMinutes;
-    updatedCar.fare = totalFare;
-  }
-
-
-            return updatedCar;
-          });
-      
-          return updatedCars;
+        const flatUpdatedCars = updatedCars.flat().sort((a, b) => {
+          if (a.pickuptype === 'priority' && b.pickuptype !== 'priority') return -1;
+          if (a.pickuptype !== 'priority' && b.pickuptype === 'priority') return 1;
+          return a.distance - b.distance;
         });
-      
-        const allUpdatedCars = await Promise.all(promises);
-      
-        const flatUpdatedCars = allUpdatedCars.flat();
-      
-        // Sort cars based on pickup type and driver distance in DESC order
-        flatUpdatedCars.sort((a, b) => {
-          if (a.pickuptype === 'priority' && b.pickuptype !== 'priority') {
-            return -1;
-          } else if (a.pickuptype !== 'priority' && b.pickuptype === 'priority') {
-            return 1;
-          } else {
-            return (b.driver_id.distance - a.driver_id.distance) || (b.distance - a.distance);
-          }
-        });
-      
-        drivers.push({
+
+        return {
           ...driver,
           cars: flatUpdatedCars,
           rideOptionsLength: flatUpdatedCars.length,
-          eta: `${eta}`,
+          eta,
           fare: `${parseFloat(actualVal).toFixed(2)}`,
           fareCent: cent,
-          reviews: resolvedReviewsData,
-        });
-      }
-    
+          reviews,
+        };
+      })
+    );
 
-      }
-        
-        res.status(200).json({ drivers, status: true });
-        } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Internal Server Error', status: false });
-        }
-        });
+    res.status(200).json({ drivers: driversWithDetails, status: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+
+
+
 app.post('/fetch-chats', async (req, res) => {
   try {
     const { driver_id, passenger_id } = req.body;
@@ -2672,6 +2677,20 @@ app.post('/book-ride', async(req, res) => {
 
     console.log('book request:', req.body)
 
+      let fetchDriverDetail = await pool.query(
+          'SELECT requested FROM drivers WHERE id = $1',
+          [driver_id]
+        );
+
+      const driverResponse = fetchDriverDetail?.rows[0]
+
+      if(Number(driverResponse?.requested) == 1 ){
+        return res.status(400).json({ message: 'We regret to inform you that the driver assigned to your current booking is currently unavailable. Please wait for the driver to become available or consider booking an alternative ride. We apologize for any inconvenience this may cause and appreciate your patience.', status: false });
+
+      }
+
+
+
        // Fetch user balance
        if(payment != 'cash'){
         let fetchBalance = await pool.query(
@@ -2681,7 +2700,7 @@ app.post('/book-ride', async(req, res) => {
 
         const res = fetchBalance.rows[0]
 
-        if(book_amount . res?.account_balance ){
+        if(book_amount > res?.account_balance ){
           return res.status(400).json({ message: 'Your wallet balance is insufficient! Try using cash as payment method', status: false });
 
         }
@@ -2742,6 +2761,11 @@ const getDriverQuery = {
 };
 
 const driverRes = await pool.query(getDriverQuery);
+
+await pool.query(
+  'UPDATE drivers SET requested = $1 WHERE id = $2',
+  ['1',driver_id]
+);
 
 
 console.log('driver data:',driverRes)
@@ -3507,6 +3531,21 @@ app.post('/reject-ride', async (req, res) => {
       [id]
     );
 
+
+    const fetBookings = await pool.query(
+      `SELECT * FROM bookings WHERE id = $1`,
+      [id]
+    );
+
+    if(fetBookings.rows.length > 0){
+      const driverID = fetBookings.rows[0]?.driver_id
+      await pool.query(
+        'UPDATE drivers SET requested = $1 WHERE id = $2',
+        ['0',driverID]
+      );
+    }
+
+
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Ride not found', status: false });
     }
@@ -3703,6 +3742,24 @@ app.post('/accept-ride', async (req, res) => {
       `UPDATE bookings SET status = 'accepted' WHERE booking_code = $1 RETURNING*`,
       [id]
     );
+
+
+    const fetBookings = await pool.query(
+      `SELECT * FROM bookings WHERE booking_code = $1`,
+      [id]
+    );
+
+    if(fetBookings.rows.length > 0){
+      const driverID = fetBookings.rows[0]?.driver_id
+      await pool.query(
+        'UPDATE drivers SET requested = $1 WHERE id = $2',
+        ['0',driverID]
+      );
+    }
+
+
+
+   
 
     if (result.rows.length === 0) {
       res.status(404).json({ message: 'Booking not found', status: false });
@@ -3970,21 +4027,7 @@ app.post('/recent-chats', async (req, res) => {
   }
 });
 
-// Function to calculate distance between two points
-function calculateDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const lat1Rad = lat1 * Math.PI / 180;
-  const lat2Rad = lat2 * Math.PI / 180;
 
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1Rad) * Math.cos(lat2Rad);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const distance = R * c;
-
-  return distance;
-}
 
 
 app.post('/reset-password', async (req, res) => {
@@ -4160,6 +4203,20 @@ app.put('/reject-booking/:id', async (req, res) => {
 
   try {
     const result = await pool.query('UPDATE bookings SET accepted = rejected WHERE id = ?', id);
+
+    const fetBookings = await pool.query(
+      `SELECT * FROM bookings WHERE id = $1`,
+      [id]
+    );
+
+    if(fetBookings.rows.length > 0){
+      const driverID = fetBookings.rows[0]?.driver_id
+      await pool.query(
+        'UPDATE drivers SET requested = $1 WHERE id = $2',
+        ['0',driverID]
+      );
+    }
+
 
     res.json({ message: 'Booking updated successfully!' });
   } catch (error) {
