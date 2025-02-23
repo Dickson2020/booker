@@ -752,10 +752,12 @@ app.get('/', async (req, res) => {
   
 });
 
+
 app.post('/admin/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     console.log('login admin request:', req.body)
+
     // Validate input
     if (!password) {
       return res.status(400).json({ message: 'Password cannot be empty', status: false });
@@ -764,15 +766,22 @@ app.post('/admin/login', async (req, res) => {
       return res.status(400).json({ message: 'Email cannot be empty', status: false });
     }
 
-    // Get driver status
+    // Get administrator data
     const getStatusQuery = {
-      text: `SELECT * FROM administration WHERE email = $1 AND password = $2`,
-      values: [email, password],
+      text: `SELECT * FROM administration WHERE email = $1`,
+      values: [email],
     };
 
     const result = await pool.query(getStatusQuery);
 
     if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Administrator login credentials incorrect', status: false });
+    }
+
+    const storedHash = result.rows[0].password;
+    const isValidPassword = await bcrypt.compare(password, storedHash);
+
+    if (!isValidPassword) {
       return res.status(404).json({ message: 'Administrator login credentials incorrect', status: false });
     }
 
@@ -782,7 +791,6 @@ app.post('/admin/login', async (req, res) => {
     res.status(500).json({ message: 'Internal Server Error', status: false });
   }
 });
-
 
 const dispatchStatistics = async () => {
   try {
@@ -952,6 +960,8 @@ app.get('/admin/fetch-riders', async (req, res) => {
   }
 });
 
+
+
 app.get('/admin/fetch-drivers', async (req, res) => {
   
   const page = req.query.page || 1;
@@ -1027,6 +1037,50 @@ async function getMonthlyPerformance(intentType) {
     growthIndicator: currentMonthTotalAmount > previousMonthTotalAmount ? 'positive' : 'negative'
   };
 }
+
+
+
+app.get('/admin/fetch-bookings', async (req, res) => {
+  const page = req.query.page || 1;
+  const limit = 10;
+
+  const offset = (page - 1) * limit;
+
+  try {
+    const result = await pool.query(
+      `SELECT * FROM bookings ORDER BY id DESC LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    const bookings = result.rows;
+
+    const totalCount = await pool.query('SELECT COUNT(*) FROM bookings');
+    const totalPages = Math.ceil(totalCount.rows[0].count / limit);
+
+    console.log('admin/fetch-riders',{
+      bookings,
+      pagination: {
+        page,
+        limit,
+        totalPages,
+        totalCount: totalCount.rows[0].count,
+      },
+    })
+    res.json({
+      bookings,
+      pagination: {
+        page,
+        limit,
+        totalPages,
+        totalCount: totalCount.rows[0].count,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+});
+
 
 
 app.get('/management-summary', async (req, res) => {
@@ -2685,7 +2739,7 @@ app.post('/book-ride', async(req, res) => {
       const driverResponse = fetchDriverDetail?.rows[0]
 
       if(Number(driverResponse?.requested) == 1 ){
-        return res.status(400).json({ message: 'We regret to inform you that the driver assigned to your current booking is currently unavailable. Please wait for the driver to become available or consider booking an alternative ride. We apologize for any inconvenience this may cause and appreciate your patience.', status: false });
+       // return res.status(400).json({ message: 'We regret to inform you that the driver assigned to your current booking is currently unavailable. Please wait for the driver to become available or consider booking an alternative ride. We apologize for any inconvenience this may cause and appreciate your patience.', status: false });
 
       }
 
