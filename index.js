@@ -1257,19 +1257,24 @@ app.get('/management-summary', async (req, res) => {
     let totalInflow = 0
     let totalOutflow = 0
 
-    const totalInflowQuery = {
-      text: `SELECT SUM(amount::integer) AS total_credit_amount FROM transactions WHERE transaction_type = $1`,
-       values: ['Credit'],   
+    const transactionsQuery = {
+      text: `SELECT amount, transaction_type FROM transactions`,
     };
-    const totalInflowResponse = await pool.query(totalInflowQuery);
-
-  totalInflow = totalInflowResponse.rows[0].total_credit_amount;
-
-  const totalOutflowQuery = {
-    text: `SELECT SUM(amount::integer) AS total_debit_amount FROM transactions WHERE transaction_type = $1`,
-     values: ['Debit'],   
-  };
-  const totalOutflowResponse = await pool.query(totalOutflowQuery);
+    
+    const transactionsResponse = await pool.query(transactionsQuery);
+    
+    const transactions = transactionsResponse.rows;
+    
+   
+    
+    transactions.forEach((transaction) => {
+      if (transaction.transaction_type === 'Credit') {
+        totalInflow += parseFloat(transaction.amount);
+      } else if (transaction.transaction_type === 'Debit') {
+        totalOutflow += parseFloat(transaction.amount);
+      }
+    });
+    
 
   const hourlyRides = await getRealtimeRides();
   const dispatchStatisticsExec = await dispatchStatistics();
@@ -1278,8 +1283,6 @@ app.get('/management-summary', async (req, res) => {
 
   console.log('hourlyRides', hourlyRides)
 
-
-  totalOutflow = totalOutflowResponse.rows[0].total_debit_amount;
 
   const stripeApiKeys = await getApiKeys()
 
@@ -4519,6 +4522,9 @@ app.post('/submit-kyc', async (req, res) => {
       'INSERT INTO kyc (name, driver_id, email, files) VALUES ($1, $2, $3, $4)',
       [ name, id, email, files]
     );
+
+    await pool.query('UPDATE drivers SET verified = $1 WHERE id = $2 ',[2, id])
+
     sendMailMessage('We have received your documents. Our team will review it within few working days', email, 'Pending: KYC Verification Notice')
     res.json({ message: 'Document uploaded successfully! Do not re-submit data.', status: true });
   } catch (error) {
