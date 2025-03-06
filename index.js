@@ -685,6 +685,115 @@ if (customerIdResponse?.stripe_customer_id !== "") {
 
 
 
+
+app.post('/pre-payment-sheet', async (req, res) => {
+  // Use an existing Customer ID if this is a returning customer.
+  const {customerId, amount} = req.body
+
+  console.log('payment sheet: ',  req.body)
+
+  const charges = ((amount) * 0.014)  //1.4 percent charge
+
+
+  if(stripe == null){
+    await initializeStripe()
+  }
+
+  const query = {
+    text: `SELECT * FROM users
+           WHERE id = $1;`,
+    values: [customerId]
+  };
+
+  // Execute query
+  const fetchCustomerStripeID = await pool.query(query);
+  let customerIdResponse = fetchCustomerStripeID.rows[0]
+  let customerIDStripe = '';
+if (customerIdResponse?.stripe_customer_id !== "") {
+    customerIDStripe = customerIdResponse?.stripe_customer_id
+    console.log('stripe customer already exits')
+    if(customerIDStripe === null){
+      const customer = await stripe.customers.create();
+      customerIDStripe =  customer.id
+  
+       const query = {
+        text: `UPDATE users
+               SET stripe_customer_id = $1
+               WHERE id = $2;`,
+        values: [customerIDStripe, customerId]
+      };
+  
+      // Execute query
+     await pool.query(query);
+  
+    }
+  }else{
+  
+
+  }
+
+  console.log( "stripe_customer_id:", customerIDStripe)
+
+  
+
+  if(customerIDStripe !== ""){
+
+  const ephemeralKey = await stripe.ephemeralKeys.create(
+    {customer: customerIDStripe},
+    {apiVersion: '2024-12-18.acacia'}
+  );
+
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: Math.round((amount + charges) * 100),
+    currency: 'usd',
+    customer: customerIDStripe,
+    capture_method: 'manual',
+    payment_method_types: ['card', 'cashapp'],
+
+  });
+
+  const paymentIntentId = paymentIntent.id;
+
+
+
+console.log('paymentIntentId',paymentIntentId);
+await pool.query(
+  'INSERT INTO transactions (user_id, description, amount, status, transaction_date, transaction_type, transaction_id, intent, intent_type, charges) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,$10)',
+  [
+    customerIdResponse?.id,
+    'Ride Fee Payment',
+    charges,
+    'Pending',
+    new Date().toISOString(),
+    'Debit',
+    paymentIntentId,
+    paymentIntentId,
+    'intenal-payment',
+    '0%'
+  ]
+);
+  
+  res.json({
+    paymentId: paymentIntent?.id,
+    paymentIntent: paymentIntent.client_secret,
+    ephemeralKey: ephemeralKey.secret,
+    customer: customerIDStripe,
+    publishableKey: stripePublishableApiKey
+  });
+
+  }else{
+
+  console.log('Invalid stripe customer ID')
+      return res.status(400).json({ message: 'Invalid stripe customer ID', status: false });
+
+
+  }
+
+});
+
+
+
+
 const sendMailMessage = async (body,receiver,subject) => {
   console.log('sending mail',body);
 
@@ -2719,7 +2828,7 @@ app.post('/book-ride', async(req, res) => {
   try {
     const { driver_id, passenger_id, from_latitude, from_longitude, destination_latitude, 
       destination_longitude, book_amount, place, car_id, destination_place, 
-      stop_latitude, stop_longitude, stop_place, pickuptype, payment } = req.body;
+      stop_latitude, stop_longitude, stop_place, pickuptype, payment, intent } = req.body;
 
     // Input validation
 
@@ -2746,7 +2855,7 @@ app.post('/book-ride', async(req, res) => {
 
 
        // Fetch user balance
-       if(payment != 'cash'){
+       if(payment == 'wallet'){
         let fetchBalance = await pool.query(
           'SELECT account_balance FROM users WHERE id = $1',
           [passenger_id]
@@ -2754,7 +2863,7 @@ app.post('/book-ride', async(req, res) => {
 
         const res = fetchBalance.rows[0]
 
-        if(book_amount > res?.account_balance ){
+        if(book_amount > parseFloat(res?.account_balance) ){
           return res.status(400).json({ message: 'Your wallet balance is insufficient! Try using cash as payment method', status: false });
 
         }
@@ -2778,8 +2887,8 @@ app.post('/book-ride', async(req, res) => {
 
     if(stop_latitude && stop_longitude){
       console.log('values not null')
-      const insertRideStopsQuery = `INSERT INTO ride_stops (place, latitude, longitude, user_id, code) VALUES ($1, $2, $3, $4, $5)`;
-      await pool.query(insertRideStopsQuery, [stop_place, stop_latitude, stop_longitude, passenger_id, bookingCode]);
+      const insertRideStopsQuery = `INSERT INTO ride_stops (place, latitude, longitude, user_id, code, intent) VALUES ($1, $2, $3, $4, $5, $6)`;
+      await pool.query(insertRideStopsQuery, [stop_place, stop_latitude, stop_longitude, passenger_id, bookingCode, intent]);
   
   
     }
@@ -4393,14 +4502,12 @@ app.post('/upload-car', async (req, res) => {
 
 
 app.post('/submit-kyc', async (req, res) => {
-  const { id, email, name, type, front, back } = req.body;
+  const { id, email, name, files } = req.body;
 
   const data = {
     email,
     name,
-    type,
-    front,
-    back,
+    files,
     id
   }
 
@@ -4409,10 +4516,10 @@ app.post('/submit-kyc', async (req, res) => {
   // Save the uploaded car to the database
   try {
     await pool.query(
-      'INSERT INTO kyc (name, driver_id, email, front, back, type) VALUES ($1, $2, $3, $4, $5, $6)',
-      [ name, id, email, front, back, type]
+      'INSERT INTO kyc (name, driver_id, email, files) VALUES ($1, $2, $3, $4)',
+      [ name, id, email, files]
     );
-    sendMailMessage('We have received your documents. Our team will review it within 48hrs', email, 'Pending: KYC Verification Notice')
+    sendMailMessage('We have received your documents. Our team will review it within few working days', email, 'Pending: KYC Verification Notice')
     res.json({ message: 'Document uploaded successfully! Do not re-submit data.', status: true });
   } catch (error) {
     console.error(error);
