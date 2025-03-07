@@ -1262,6 +1262,17 @@ app.get('/management-summary', async (req, res) => {
     };
     
     const transactionsResponse = await pool.query(transactionsQuery);
+
+
+
+    const fetchKYC = {
+      text: `SELECT * FROM kyc`,
+    };
+    
+    const fetchKycRes = await pool.query(fetchKYC);
+
+    const kyc = fetchKycRes.rows;
+
     
     const transactions = transactionsResponse.rows;
     
@@ -1297,6 +1308,7 @@ app.get('/management-summary', async (req, res) => {
       uploadedCars: uploadedCarsCount,
       rides: results[4].rows,
       hourlyRides,
+      kyc,
       depositPerformance: internalDepositPerformance,
       payoutPerformance: externalPayoutPerformance,
       cancelChargePerformance: cancelRideFeePaymentPerformance,
@@ -1334,6 +1346,113 @@ app.post('/admin/update-api', (req, res) => {
       }
   );
 });
+
+
+
+
+app.post('/admin/reject-licence', async (req, res) => {
+  let data = req.body;
+
+  // Update the API keys in the database
+  console.log('reject licence:', data)
+  pool.query('UPDATE drivers SET verified = $1 WHERE id = $2',
+      [0, data?.driver_id],
+      async (err, result) => {
+          if (err) {
+              console.error('error updating API keys:', err);
+              res.status(500).send({ message: 'Error: ' + err?.message, status: false });
+              return;
+          }
+
+          sendMailMessage(
+            `
+              <html>
+                <body style="font-family: Arial, sans-serif; margin: 0; padding: 0;">
+                  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f2f2f2; padding: 20px;">
+                    <tr>
+                      <td>
+                        <table width="600" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto; background-color: #ffffff; padding: 20px;">
+                          <tr>
+                            <td>
+                              <h2 style="color: #333333; font-size: 24px; font-weight: bold; margin-bottom: 10px;">Licence Rejected</h2>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">Dear Yesatt Driver,</p>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">We regret to inform you that your driver's licence has been rejected.</p>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">Please ensure that your uploaded licence meets all the necessary requirements and try again.</p>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">Thank you for using our services. If you have any questions or concerns, please do not hesitate to contact us.</p>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">Best regards,</p>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">Yesatt</p>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+                </body>
+              </html>
+            `,
+            data?.email,
+            'Driver Licence Rejected'
+          )
+
+          await pool.query('DELETE FROM kyc WHERE id = $1',[data?.id])
+
+          res.send({ message: 'Licence rejected', status: true });
+      }
+  );
+});
+
+
+app.post('/admin/approve-licence', (req, res) => {
+  let data = req.body;
+
+  // Update the API keys in the database
+
+  console.log('approve licence:',data)
+  pool.query('UPDATE drivers SET verified = $1 WHERE id = $2',
+      [1,data?.driver_id],
+      async (err, result) => {
+          if (err) {
+              console.error('error updating API keys:', err);
+              res.status(500).send({ message: 'Error: ' + err?.message, status: false });
+              return;
+          }
+
+          sendMailMessage(
+            `
+              <html>
+                <body style="font-family: Arial, sans-serif; margin: 0; padding: 0;">
+                  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f2f2f2; padding: 20px;">
+                    <tr>
+                      <td>
+                        <table width="600" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto; background-color: #ffffff; padding: 20px;">
+                          <tr>
+                            <td>
+                              <h2 style="color: #333333; font-size: 24px; font-weight: bold; margin-bottom: 10px;">Congratulations!</h2>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">Dear Yesatt Driver,</p>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">We are pleased to inform you that your driver's licence has been successfully verified and approved.</p>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">Your uploaded licence has met all the necessary requirements, and you are now eligible to drive.</p>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">Thank you for using our services. If you have any questions or concerns, please do not hesitate to contact us.</p>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">Best regards,</p>
+                              <p style="color: #666666; font-size: 16px; margin-bottom: 20px;">Yesatt</p>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+                </body>
+              </html>
+            `,
+            data?.email,
+            'Driver Licence Approved'
+          )
+
+          await pool.query('DELETE FROM kyc WHERE id = $1',[data?.id])
+          res.send({ message: 'Licence approved', status: true });
+      }
+  );
+});
+
 
 app.post('/admin/add-new-staff', (req, res) => {
   let staffData = req.body;
