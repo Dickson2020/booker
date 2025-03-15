@@ -14,6 +14,7 @@ const speakeasy = require("speakeasy");
 // Increase the limit for the body-parser middleware
 app.use(express.json({ limit: '50mb' })); // Parse JSON bodies with a limit of 50MB
 app.use(express.urlencoded({ extended: true, limit: '50mb' })); // Parse URL-encoded bodies with a limit of 50MB
+app.use(cors());
 
 
 /*
