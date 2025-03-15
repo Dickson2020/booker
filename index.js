@@ -8,6 +8,8 @@ const crypto = require('crypto');
 const request = require('request');
 const base64js = require('base64-js');
 const axios = require('axios'); // Add this line to import axios
+const speakeasy = require("speakeasy");
+
 
 // Increase the limit for the body-parser middleware
 app.use(express.json({ limit: '50mb' })); // Parse JSON bodies with a limit of 50MB
@@ -139,6 +141,7 @@ app.post('/webhook', express.json({ type: 'application/json' }), async (request,
         const getUserQuery = await pool.query('SELECT * FROM users WHERE stripe_customer_id = $1', [paymentIntent?.customer]);
         const userId = getUserQuery.rows[0].id;
         const email = getUserQuery.rows[0].email;
+        const pushToken = getUserQuery.rows[0].token;
 
         console.log('user id:,', userId)
 
@@ -163,7 +166,7 @@ app.post('/webhook', express.json({ type: 'application/json' }), async (request,
 
         // Send deposit notification email
         sendMailMessage('Transaction Notification, ' + getUserPreviousBalance.rows[0].name + ', you have received a payment of $' + paymentIntent.amount / 100, email, 'Transaction Notification')
-
+        await pushNotification('Transaction Notification','Hi! '+getUserPreviousBalance.rows[0].name + ', you have received a payment of $' +( paymentIntent.amount / 100),pushToken)
         // Update account balance
         const newBalance = Number(getUserPreviousBalance.rows[0].account_balance) + Number(paymentIntent.amount / 100);
         await pool.query(
@@ -227,12 +230,13 @@ app.post('/webhook', express.json({ type: 'application/json' }), async (request,
         const getUserQueryUser2 = await pool.query('SELECT * FROM drivers WHERE id = $1', [getUserQueryTrx2?.rows[0]?.user_id]);
         const emailUser2 = getUserQueryUser2.rows[0]?.email;
         const userIdx = getUserQueryUser2.rows[0]?.id;
+        const token = getUserQueryUser2.rows[0]?.token;
 
         console.log(' getUserQueryUser2.rows[0]:', getUserQueryUser2.rows[0])
 
         console.log('user id:,', userIdx)
         sendMailMessage('Payout of $' + paymentIntent?.amount + ', was successfully processed!', emailUser2, 'Payout Successful')
-
+        await pushNotification('transaction successful','Payout of $' + paymentIntent?.amount + ', was successfully processed!',token)
 
 
         await pool.query(
@@ -822,6 +826,75 @@ app.post('/pre-payment-sheet', async (req, res) => {
 
 });
 
+
+function extractTokenId(token) {
+  const match = token.match(/\[(.*?)\]/); // Use a regex to find text inside square brackets
+  return match ? match[1] : null; // Return the matched content or null if not found
+}
+
+
+
+app.post('/update-push-token', async (req, res) => {
+  const { id, token_id, type } = req.body;
+
+  console.log('PUSH TOKEN UPDATE', (token_id));
+
+  if (!id || !token_id || !type) {
+    return res.status(400).json({ message: 'Invalid request data' });
+  }
+
+  // Validate table name to prevent SQL injection
+  const table = type === 'driver' ? 'drivers' : 'users';
+
+  // Ensure table name is safe by allowing only predefined options
+  if (!['drivers', 'users'].includes(table)) {
+    return res.status(400).json({ message: 'Invalid type specified' });
+  }
+
+  // Correct PostgreSQL query with $1, $2 placeholders
+  const query = `UPDATE ${table} SET token = $1 WHERE id = $2`;
+
+  try {
+    const result = await pool.query(query, [(token_id), id]);
+
+    if (result.rowCount > 0) {
+      res.status(200).json({ message: 'Token updated successfully' });
+    } else {
+      res.status(404).json({ message: 'User not found' });
+    }
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+
+
+async function pushNotification(title, message, token) {
+    const notification = {
+        to: token,
+        sound: 'default',
+        title: title,
+        body: message,
+    };
+
+    try {
+        const response = await axios.post('https://exp.host/--/api/v2/push/send', notification, {
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        console.log('EXPO_PUSH_SERVICE',response.data);
+
+       
+
+        return response.data;
+    } catch (error) {
+        console.error('Error sending push notification:', error.message);
+
+    }
+}
 
 
 
@@ -2197,6 +2270,25 @@ app.get('/users/:id/update-position', async (req, res) => {
 });
 
 
+app.get('/totp/:key', async (req, res)=>{
+  const secret = req.params
+ 
+ var token = speakeasy.totp({
+  secret: secret.key,
+  encoding: 'base32'
+});
+
+if(token){
+res.status(200).json({message: 'Token generated successfully', token: token, status: true})
+}else{
+  res.status(500).json({message: 'Error generating token', status: false})
+}
+
+ 
+
+})
+
+
 app.post('/update-photo', async (req, res) => {
   try {
     const { id, type, uri } = req.body;
@@ -3045,9 +3137,10 @@ app.post('/rebook-ride', async (req, res) => {
 
     // Send email notification to driver
     const driverEmail = driverRes.rows[0].email;
+    const driverToken = driverRes.rows[0].token;
 
     sendMailMessage(`You have a rebooked ride request at Pickup location: ${bookingData.place} - Destination: ${bookingData.destination_place} . Passenger is expecting you. Accept or Reject ride`, driverEmail, 'Rebooked Ride Request');
-
+    await pushNotification('Ride Alert',`You have a rebooked ride request at Pickup location: ${bookingData.place} - Destination: ${bookingData.destination_place} . Passenger is expecting you. Accept or Reject ride`, driverToken );
     res.status(200).json({
       message: `You have rebooked a past ride request at Pickup location: ${bookingData.place} - Destination: ${bookingData.destination_place} . Driver will be notified`,
       status: true,
@@ -4183,6 +4276,8 @@ app.post('/rider/cancel-ride', async (req, res) => {
 
       const RiderRes = await pool.query(getRiderQuery);
 
+      const driveToken = driverRes.rows[0].token
+
 
       console.log('cancel ride request:', req.body)
       const newBalance = Number(RiderRes.rows[0].account_balance) - Number(charge);
@@ -4224,7 +4319,7 @@ app.post('/rider/cancel-ride', async (req, res) => {
       );
 
       sendMailMessage(`Ride request at Pickup location: ${existingBooking.rows[0].place}, was cancelled by passenger.`, driverRes.rows[0].email, 'Ride Request Cancelled')
-
+      await pushNotification('Ride cancelled',`Ride request at Pickup location: ${existingBooking.rows[0].place}, was cancelled by passenger.`,driveToken)
 
 
     }
@@ -4257,18 +4352,19 @@ app.post('/cancel-ride', async (req, res) => {
       [id]
     );
     if (existingBooking.rows.length > 0) {
-      const getDriverQuery = {
-        text: `SELECT * FROM drivers
+      const passengerQuery = {
+        text: `SELECT * FROM users
                WHERE id = $1`,
-        values: [existingBooking.rows[0].driver_id],
+        values: [existingBooking.rows[0].passenger_id],
       };
 
-      const driverRes = await pool.query(getDriverQuery);
-
-      console.log('driver data:', driverRes)
-      sendMailMessage(`Ride request at Pickup location: ${existingBooking.rows[0].place}, was cancelled by passenger.`, driverRes.rows[0].email, 'Ride Request Cancelled(by customer)')
+      const passengerRes = await pool.query(passengerQuery);
 
 
+      const passengerToken = passengerRes?.rows[0]?.token
+
+      sendMailMessage(`Ride request at Pickup location: ${existingBooking.rows[0].place}, was cancelled by driver.`, driverRes.rows[0].email, 'Ride Request Cancelled')
+      await pushNotification('Ride cancelled',`Ride request at Pickup location: ${existingBooking.rows[0].place}, was cancelled by driver.`,passengerToken)
 
     }
 
@@ -4310,10 +4406,28 @@ app.post('/accept-ride', async (req, res) => {
 
     if (fetBookings.rows.length > 0) {
       const driverID = fetBookings.rows[0]?.driver_id
+      const passenger_id = fetBookings.rows[0]?.passenger_id
       await pool.query(
         'UPDATE drivers SET requested = $1 WHERE id = $2',
         ['0', driverID]
       );
+
+
+      const passengerQuery = {
+        text: `SELECT * FROM users
+               WHERE id = $1`,
+        values: [passenger_id],
+      };
+
+      const passengerRes = await pool.query(passengerQuery);
+
+
+      const passengerToken = passengerRes?.rows[0]?.token
+
+      await pushNotification('Driver arriving',`Driver has accepted to come pick you up at your pickup location ${fetBookings.rows[0].place}, please standby and wait!`,passengerToken)
+
+
+
     }
 
 
@@ -4366,6 +4480,12 @@ app.post('/complete-ride', async (req, res) => {
       return res.status(404).json({ message: 'Ride not found', status: false });
     }
 
+
+    const passengerToken = passenger.rows[0].token
+
+    await pushNotification('Ride completed',`Hey! ${passenger.rows[0].name} you have arrived your destination at ${fetBookings.rows[0].destination}. Thank you for choosing Yesatt!`,passengerToken)
+
+
     res.status(200).json({
       message: 'Ride completed successfully',
       ride: result.rows[0],
@@ -4390,6 +4510,15 @@ app.post('/chats', async (req, res) => {
         status: false,
       });
     }
+
+
+    const driverObject = await pool.query('SELECT * FROM drivers WHERE id = $1', [driver_id]);
+    const passengerObject = await pool.query('SELECT * FROM users WHERE id = $1', [passenger_id]);
+
+    const driverToken = driverObject.rows[0].token
+    const passengerToken = passengerObject.rows[0].token
+
+    await pushNotification('New message',`Hey! You have a new message, goto messages to reply.`, driver? passengerToken :  driverToken)
 
     // Insert chat message into database
     await pool.query(
