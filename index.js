@@ -8,13 +8,7 @@ const crypto = require('crypto');
 const request = require('request');
 const base64js = require('base64-js');
 const axios = require('axios'); // Add this line to import axios
-const speakeasy = require("speakeasy");
-
-app.use(cors({
-  origin: "https://yesatt.com", // Allow only your domain
-  methods: "GET, POST, PUT, DELETE",
-  allowedHeaders: "Content-Type, Authorization"
-}));
+const cors = require('cors');
 
 // Increase the limit for the body-parser middleware
 app.use(express.json({ limit: '50mb' })); // Parse JSON bodies with a limit of 50MB
@@ -2274,26 +2268,6 @@ app.get('/users/:id/update-position', async (req, res) => {
     res.status(500).json({ message: 'Internal Server Error' });
   }
 });
-
-
-app.get('/totp/:key', async (req, res)=>{
-  const secret = req.params
- 
- var token = speakeasy.totp({
-  secret: secret.key,
-  encoding: 'base32'
-});
-
-if(token){
-res.status(200).json({message: 'Token generated successfully', token: token, status: true})
-}else{
-  res.status(500).json({message: 'Error generating token', status: false})
-}
-
- 
-
-})
-
 
 app.post('/update-photo', async (req, res) => {
   try {
