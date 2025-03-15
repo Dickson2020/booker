@@ -10,11 +10,16 @@ const base64js = require('base64-js');
 const axios = require('axios'); // Add this line to import axios
 const speakeasy = require("speakeasy");
 
+app.use(cors({
+  origin: "https://yesatt.com", // Allow only your domain
+  methods: "GET, POST, PUT, DELETE",
+  allowedHeaders: "Content-Type, Authorization"
+}));
 
 // Increase the limit for the body-parser middleware
 app.use(express.json({ limit: '50mb' })); // Parse JSON bodies with a limit of 50MB
 app.use(express.urlencoded({ extended: true, limit: '50mb' })); // Parse URL-encoded bodies with a limit of 50MB
-app.use(cors());
+
 
 
 /*
