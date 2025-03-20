@@ -4714,7 +4714,44 @@ app.post('/reset-password', async (req, res) => {
 
     // Check if user exists
     const existingUser = await pool.query(
-      'SELECT * FROM users WHERE email = $1',
+      'SELECT * FROM drivers WHERE email = $1',
+      [email]
+    );
+
+    if (existingUser.rows.length === 0) {
+      return res.status(404).json({ message: 'Email does not exist', status: false });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Update user password
+    await pool.query(
+      'UPDATE drivers SET password = $1 WHERE email = $2',
+      [hashedPassword, email]
+    );
+
+
+    res.status(200).json({ message: 'Password reset successfully!', status: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Internal Server Error', status: false });
+  }
+});
+
+
+app.post('/driver/reset-password', async (req, res) => {
+  try {
+    // console.log('req data', req.body);
+
+    const { password, email } = req.body;
+
+    console.log('password:', password)
+    console.log('email:', email)
+
+    // Check if user exists
+    const existingUser = await pool.query(
+      'SELECT * FROM drivers WHERE email = $1',
       [email]
     );
 
